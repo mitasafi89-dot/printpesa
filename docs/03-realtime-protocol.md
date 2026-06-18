@@ -15,9 +15,11 @@ Message envelope: JSON `{ "type": string, "data": object, "ts": epoch_ms }`.
 | `position_update` | `{ positionId, liveMultiplier, livePnl, secondsLeft }` | per-tick P&L |
 | `position_settled` | `{ positionId, exitRate, multiplier, payout, pnl, result }` | final outcome |
 | `balance` | `{ real, bonus, currency }` | pushed after settle/credit |
-| `activity` | `{ kind, username, amount, message }` | live activity feed item |
-| `chat` | `{ username, message, ts }` | chat message |
-| `error` | `{ code, message }` | validation/engine error |
+| `activity` | `{ kind, username, amountCents, message, ts }` | live activity feed item (real or simulated) |
+| `activity_batch` | `{ items: [...] }` | recent activity backfill on connect (oldest-first) |
+| `chat` | `{ id, username, message, ts }` | a chat message broadcast to all |
+| `chat_batch` | `{ items: [...] }` | recent chat backfill on connect / `subscribe_chat` (oldest-first) |
+| `error` | `{ code, message, reasons? }` | validation/engine error (`reasons` lists chat sanitization/limit causes) |
 
 ## 2. Client → Server events
 | type | data | description |
