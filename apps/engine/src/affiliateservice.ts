@@ -1,4 +1,8 @@
-import type { AffiliateView, AffiliateAccrualResult, AffiliateRepository } from "./identity.js";
+import type {
+  AffiliateView, AffiliateAccrualResult, AffiliateRepository,
+  AffiliateSummary, ReferralRecord, CommissionRecord,
+} from "./identity.js";
+import type { Page, PageQuery } from "./paging.js";
 
 /**
  * AffiliateService (Issue I1+) — the marketer/affiliate domain seam the HTTP API binds to.
@@ -27,5 +31,22 @@ export class AffiliateService {
   async accrueDaily(period: string): Promise<AffiliateAccrualResult> {
     if (typeof period !== "string" || !PERIOD_RE.test(period)) throw new Error("INVALID_PERIOD");
     return this.repo.accrueCommissions(period);
+  }
+
+  /** Marketer dashboard summary for the caller. Throws NOT_AFFILIATE if not enrolled. */
+  async summary(userId: string): Promise<AffiliateSummary> {
+    const s = await this.repo.affiliateSummary(userId);
+    if (!s) throw new Error("NOT_AFFILIATE");
+    return s;
+  }
+
+  /** The caller's referred players (newest first, cursor-paginated). */
+  listReferrals(userId: string, q: PageQuery): Promise<Page<ReferralRecord>> {
+    return this.repo.listReferrals(userId, q);
+  }
+
+  /** The caller's daily commission history (newest first, cursor-paginated). */
+  listCommissions(userId: string, q: PageQuery): Promise<Page<CommissionRecord>> {
+    return this.repo.listCommissions(userId, q);
   }
 }

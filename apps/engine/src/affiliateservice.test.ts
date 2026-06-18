@@ -82,3 +82,43 @@ test("accrueDaily: 20% of zero-floored daily GGR; idempotent; rejects a malforme
   assert.deepEqual(await svc.accrueDaily("2026-06-10"), { buckets: 1, totalCommissionCents: 2500 }); // idempotent
   await assert.rejects(svc.accrueDaily("06/10/2026"), /INVALID_PERIOD/);
 });
+
+test("summary + dashboard reads: aggregates referrals, turnover, GGR, accrued/available", async () => {
+  const repo = new InMemoryIdentityRepository();
+  const svc = new AffiliateService(repo);
+  const aff = await repo.register("254700000020", "mk_dash", HASH);
+  const code = (await svc.enroll(aff.userId)).referralCode;
+  const r1 = await repo.register("254700000021", "ref_x", HASH, code);
+  const r2 = await repo.register("254700000022", "ref_y", HASH, code);
+  repo.recordSettledPlay(r1.userId, "2026-06-10", 10000, 2500);
+  repo.recordSettledPlay(r1.userId, "2026-06-10", 5000, 0);   // r1 GGR 12500 -> commission 2500
+  repo.recordSettledPlay(r2.userId, "2026-06-10", 4000, 0);   // r2 GGR 4000  -> commission 800
+  await svc.accrueDaily("2026-06-10");
+
+  const s = await svc.summary(aff.userId);
+  assert.equal(s.totalReferrals, 2);
+  assert.equal(s.activePlayers7d, 2);
+  assert.equal(s.turnoverCents, 19000);          // 10000 + 5000 + 4000
+  assert.equal(s.ggrCents, 16500);               // 12500 + 4000
+  assert.equal(s.commissionAccruedCents, 3300);  // 2500 + 800
+  assert.equal(s.commissionPaidCents, 0);
+  assert.equal(s.availableCents, 3300);
+  assert.equal(s.commissionRate, 0.2);
+
+  const refs = await svc.listReferrals(aff.userId, {});
+  assert.equal(refs.items.length, 2);
+  const ggrByName = Object.fromEntries(refs.items.map((i) => [i.username, i.lifetimeGgrCents]));
+  assert.equal(ggrByName["ref_x"], 12500);
+  assert.equal(ggrByName["ref_y"], 4000);
+
+  const coms = await svc.listCommissions(aff.userId, {});
+  assert.equal(coms.items.length, 2);
+  assert.ok(coms.items.every((c) => c.period === "2026-06-10" && c.status === "accrued"));
+});
+
+test("summary: NOT_AFFILIATE when the caller is not enrolled", async () => {
+  const repo = new InMemoryIdentityRepository();
+  const svc = new AffiliateService(repo);
+  const u = await repo.register("254700000023", "plain", HASH);
+  await assert.rejects(svc.summary(u.userId), /NOT_AFFILIATE/);
+});

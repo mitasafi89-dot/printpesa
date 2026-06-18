@@ -1,6 +1,7 @@
 import { randomUUID, randomInt } from "node:crypto";
 import { REFERRAL_CODE_ALPHABET, REFERRAL_CODE_LENGTH } from "@printpesa/shared";
 import type { Querier } from "./wallet.js";
+import { type Page, type PageQuery, clampLimit, decodeKeyset, pageFrom } from "./paging.js";
 
 /**
  * IdentityRepository: durable boundary for self-managed phone + password identity and the
@@ -31,6 +32,18 @@ export interface AffiliateView {
 /** Result of a daily commission-accrual run. */
 export interface AffiliateAccrualResult { buckets: number; totalCommissionCents: number; }
 
+/** Marketer dashboard summary (all monetary fields in cents). */
+export interface AffiliateSummary {
+  referralCode: string; referralPath: string; commissionRate: number; status: string;
+  totalReferrals: number; activePlayers7d: number; activePlayers30d: number;
+  turnoverCents: number; ggrCents: number;
+  commissionAccruedCents: number; commissionPaidCents: number; availableCents: number;
+}
+/** One referred player as shown in the marketer's referrals list. */
+export interface ReferralRecord { username: string; joinedAtMs: number; lifetimeGgrCents: number; }
+/** One daily commission bucket as shown in the marketer's commission history. */
+export interface CommissionRecord { period: string; ggrCents: number; commissionCents: number; status: string; createdAtMs: number; }
+
 export interface IdentityRepository {
   /**
    * Atomically create profile + wallet + credentials. An optional referral code (already
@@ -57,6 +70,12 @@ export interface AffiliateRepository {
   enrollAffiliate(userId: string): Promise<AffiliateView>;
   /** Accrue commission for one trading day (`YYYY-MM-DD`) across all referred players. Idempotent. */
   accrueCommissions(period: string): Promise<AffiliateAccrualResult>;
+  /** Marketer dashboard summary, or null if the user is not an enrolled affiliate. */
+  affiliateSummary(userId: string): Promise<AffiliateSummary | null>;
+  /** The affiliate's referred players (newest first, cursor-paginated). */
+  listReferrals(userId: string, q: PageQuery): Promise<Page<ReferralRecord>>;
+  /** The affiliate's daily commission history (newest first, cursor-paginated). */
+  listCommissions(userId: string, q: PageQuery): Promise<Page<CommissionRecord>>;
 }
 
 /** Re-raise the bare error code the RPCs raise instead of the wrapped pg message. */
@@ -71,6 +90,11 @@ function toIsoDate(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   return String(v).slice(0, 10);
+}
+
+/** Normalize a pg timestamp value to epoch milliseconds. */
+function toMs(v: unknown): number {
+  return v instanceof Date ? v.getTime() : new Date(String(v)).getTime();
 }
 
 /** Postgres-backed identity, calling the 0015/0016 RPCs + profile reads. */
@@ -101,6 +125,72 @@ export class PgIdentityRepository implements IdentityRepository, AffiliateReposi
       "select buckets, total_commission from fn_accrue_affiliate_commissions($1)", [period]);
     const x = r.rows[0];
     return { buckets: Number(x.buckets), totalCommissionCents: Number(x.total_commission) };
+  }
+  async affiliateSummary(userId: string): Promise<AffiliateSummary | null> {
+    const r = await this.q.query(
+      `select a.referral_code, a.commission_rate, a.status,
+         (select count(*) from referrals r where r.affiliate_id = a.user_id) as total_referrals,
+         (select count(distinct p.user_id) from positions p join referrals r on r.referred_user = p.user_id
+           where r.affiliate_id = a.user_id and p.opened_at >= now() - interval '7 days') as active7,
+         (select count(distinct p.user_id) from positions p join referrals r on r.referred_user = p.user_id
+           where r.affiliate_id = a.user_id and p.opened_at >= now() - interval '30 days') as active30,
+         (select coalesce(sum(p.stake),0) from positions p join referrals r on r.referred_user = p.user_id
+           where r.affiliate_id = a.user_id and p.status = 'settled') as turnover,
+         (select coalesce(sum(c.ggr),0) from affiliate_commissions c where c.affiliate_id = a.user_id) as ggr,
+         (select coalesce(sum(c.commission),0) from affiliate_commissions c where c.affiliate_id = a.user_id and c.status = 'accrued') as accrued,
+         (select coalesce(sum(c.commission),0) from affiliate_commissions c where c.affiliate_id = a.user_id and c.status = 'paid') as paid,
+         (select coalesce(sum(ap.amount),0) from affiliate_payouts ap where ap.affiliate_id = a.user_id and ap.status in ('requested','approved')) as pending
+       from affiliates a where a.user_id = $1`, [userId]);
+    if (!r.rows.length) return null;
+    const x = r.rows[0];
+    const accrued = Number(x.accrued);
+    const pending = Number(x.pending);
+    return {
+      referralCode: String(x.referral_code), referralPath: `/r/${x.referral_code}`,
+      commissionRate: Number(x.commission_rate), status: String(x.status),
+      totalReferrals: Number(x.total_referrals), activePlayers7d: Number(x.active7), activePlayers30d: Number(x.active30),
+      turnoverCents: Number(x.turnover), ggrCents: Number(x.ggr),
+      commissionAccruedCents: accrued, commissionPaidCents: Number(x.paid),
+      availableCents: Math.max(0, accrued - pending),
+    };
+  }
+  async listReferrals(userId: string, q: PageQuery): Promise<Page<ReferralRecord>> {
+    const limit = clampLimit(q.limit);
+    const cur = decodeKeyset(q.cursor);
+    const r = await this.q.query(
+      `select pr.username, r.created_at, r.id,
+         coalesce((select sum(c.ggr) from affiliate_commissions c
+                    where c.affiliate_id = r.affiliate_id and c.referred_user = r.referred_user),0) as lifetime_ggr
+         from referrals r join profiles pr on pr.id = r.referred_user
+        where r.affiliate_id = $1
+          and ($2::timestamptz is null or (r.created_at, r.id) < ($2::timestamptz, $3::bigint))
+        order by r.created_at desc, r.id desc
+        limit $4`,
+      [userId, cur ? new Date(cur.tsMs).toISOString() : null, cur ? cur.id : null, limit + 1]);
+    const rows = r.rows.map((x) => ({
+      username: String(x.username), joinedAtMs: toMs(x.created_at), lifetimeGgrCents: Number(x.lifetime_ggr),
+      _id: String(x.id),
+    }));
+    const page = pageFrom(rows, limit, (t) => `${t.joinedAtMs}:${t._id}`);
+    return { items: page.items.map(({ _id, ...rest }) => rest), nextCursor: page.nextCursor };
+  }
+  async listCommissions(userId: string, q: PageQuery): Promise<Page<CommissionRecord>> {
+    const limit = clampLimit(q.limit);
+    const cur = decodeKeyset(q.cursor);
+    const r = await this.q.query(
+      `select c.period, c.ggr, c.commission, c.status, c.created_at, c.id
+         from affiliate_commissions c
+        where c.affiliate_id = $1
+          and ($2::timestamptz is null or (c.created_at, c.id) < ($2::timestamptz, $3::bigint))
+        order by c.created_at desc, c.id desc
+        limit $4`,
+      [userId, cur ? new Date(cur.tsMs).toISOString() : null, cur ? cur.id : null, limit + 1]);
+    const rows = r.rows.map((x) => ({
+      period: toIsoDate(x.period) ?? String(x.period), ggrCents: Number(x.ggr), commissionCents: Number(x.commission),
+      status: String(x.status), createdAtMs: toMs(x.created_at), _id: String(x.id),
+    }));
+    const page = pageFrom(rows, limit, (t) => `${t.createdAtMs}:${t._id}`);
+    return { items: page.items.map(({ _id, ...rest }) => rest), nextCursor: page.nextCursor };
   }
   async findByPhone(phone: string): Promise<CredentialRecord | null> {
     const r = await this.q.query(
@@ -142,7 +232,8 @@ interface MemUser {
 
 interface MemAffiliate { userId: string; referralCode: string; commissionRate: number; status: string; }
 interface MemPlay { referredUser: string; period: string; stakeCents: number; payoutCents: number; openedAtMs: number; }
-interface MemCommission { affiliateId: string; referredUser: string; period: string; ggr: number; commission: number; status: string; }
+interface MemCommission { id: number; affiliateId: string; referredUser: string; period: string; ggr: number; commission: number; status: string; createdAtMs: number; }
+interface MemReferral { id: number; affiliateId: string; referredUser: string; createdAtMs: number; }
 
 /** In-memory identity store mirroring the RPC contracts (tests + dev). */
 export class InMemoryIdentityRepository implements IdentityRepository, AffiliateRepository {
@@ -151,9 +242,10 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
   private readonly usernames = new Set<string>();
   private readonly affiliates = new Map<string, MemAffiliate>();      // userId -> affiliate
   private readonly byReferralCode = new Map<string, string>();         // code -> userId
-  private readonly referrals: Array<{ affiliateId: string; referredUser: string; createdAtMs: number }> = [];
+  private readonly referrals: MemReferral[] = [];
   private readonly plays: MemPlay[] = [];
   private readonly commissions: MemCommission[] = [];
+  private seq = 0;
   async register(phone: string, username: string, passwordHash: string, referralCode?: string): Promise<RegisteredUser> {
     if (phone.length < 8) throw new Error("INVALID_PHONE");
     if (username.length < 3) throw new Error("INVALID_USERNAME");
@@ -171,7 +263,7 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
       const aff = affUserId ? this.affiliates.get(affUserId) : undefined;
       if (aff && aff.status === "active" && aff.userId !== u.userId) {
         u.referredBy = aff.userId;
-        this.referrals.push({ affiliateId: aff.userId, referredUser: u.userId, createdAtMs: Date.now() });
+        this.referrals.push({ id: ++this.seq, affiliateId: aff.userId, referredUser: u.userId, createdAtMs: Date.now() });
       }
     }
     return { userId: u.userId, role: u.role };
@@ -222,7 +314,7 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
           if (existing.status !== "accrued") continue; // paid/reversed buckets are never re-touched
           existing.ggr = ggr; existing.commission = commission;
         } else {
-          this.commissions.push({ affiliateId: affUserId, referredUser: ru, period, ggr, commission, status: "accrued" });
+          this.commissions.push({ id: ++this.seq, affiliateId: affUserId, referredUser: ru, period, ggr, commission, status: "accrued", createdAtMs: Date.now() });
         }
         buckets += 1; total += commission;
       }
@@ -233,6 +325,53 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
   recordSettledPlay(referredUser: string, period: string, stakeCents: number, payoutCents: number, openedAtMs: number = Date.now()): void {
     this.plays.push({ referredUser, period, stakeCents, payoutCents, openedAtMs });
   }
+  async affiliateSummary(userId: string): Promise<AffiliateSummary | null> {
+    const aff = this.affiliates.get(userId);
+    if (!aff) return null;
+    const referred = this.referrals.filter((r) => r.affiliateId === userId).map((r) => r.referredUser);
+    const refSet = new Set(referred);
+    const now = Date.now();
+    const playsOfReferred = this.plays.filter((p) => refSet.has(p.referredUser));
+    const activeWithin = (days: number): number =>
+      new Set(playsOfReferred.filter((p) => p.openedAtMs >= now - days * 86_400_000).map((p) => p.referredUser)).size;
+    const turnover = playsOfReferred.reduce((s, p) => s + p.stakeCents, 0);
+    const myCommissions = this.commissions.filter((c) => c.affiliateId === userId);
+    const ggr = myCommissions.reduce((s, c) => s + c.ggr, 0);
+    const accrued = myCommissions.filter((c) => c.status === "accrued").reduce((s, c) => s + c.commission, 0);
+    const paid = myCommissions.filter((c) => c.status === "paid").reduce((s, c) => s + c.commission, 0);
+    const pending = this.pendingPayoutCents(userId);
+    return {
+      referralCode: aff.referralCode, referralPath: `/r/${aff.referralCode}`,
+      commissionRate: aff.commissionRate, status: aff.status,
+      totalReferrals: referred.length, activePlayers7d: activeWithin(7), activePlayers30d: activeWithin(30),
+      turnoverCents: turnover, ggrCents: ggr,
+      commissionAccruedCents: accrued, commissionPaidCents: paid, availableCents: Math.max(0, accrued - pending),
+    };
+  }
+  async listReferrals(userId: string, q: PageQuery): Promise<Page<ReferralRecord>> {
+    const rows = this.referrals
+      .filter((r) => r.affiliateId === userId)
+      .map((r) => ({
+        username: this.byId.get(r.referredUser)?.username ?? "unknown",
+        joinedAtMs: r.createdAtMs,
+        lifetimeGgrCents: this.commissions
+          .filter((c) => c.affiliateId === userId && c.referredUser === r.referredUser)
+          .reduce((s, c) => s + c.ggr, 0),
+        _ts: r.createdAtMs, _id: String(r.id),
+      }));
+    return stripKeys(memPage(rows, q));
+  }
+  async listCommissions(userId: string, q: PageQuery): Promise<Page<CommissionRecord>> {
+    const rows = this.commissions
+      .filter((c) => c.affiliateId === userId)
+      .map((c) => ({
+        period: c.period, ggrCents: c.ggr, commissionCents: c.commission, status: c.status, createdAtMs: c.createdAtMs,
+        _ts: c.createdAtMs, _id: String(c.id),
+      }));
+    return stripKeys(memPage(rows, q));
+  }
+  /** Pending (requested/approved) payout reservation against accrued commission. Extended in I4. */
+  private pendingPayoutCents(_userId: string): number { return 0; }
   private toProfile(u: MemUser): ProfileRow {
     return {
       userId: u.userId, username: u.username, role: u.role, status: u.status,
@@ -259,4 +398,18 @@ function genReferralCode(): string {
   let s = "";
   for (let i = 0; i < REFERRAL_CODE_LENGTH; i++) s += REFERRAL_CODE_ALPHABET.charAt(randomInt(REFERRAL_CODE_ALPHABET.length));
   return s;
+}
+
+/** In-memory keyset pagination over `(_ts desc, _id desc)` rows, mirroring the Pg keyset reads. */
+function memPage<T extends { _ts: number; _id: string }>(all: T[], q: PageQuery): Page<T> {
+  const limit = clampLimit(q.limit);
+  const cur = decodeKeyset(q.cursor);
+  const sorted = [...all].sort((a, b) => (b._ts - a._ts) || (a._id < b._id ? 1 : a._id > b._id ? -1 : 0));
+  const filtered = cur ? sorted.filter((x) => x._ts < cur.tsMs || (x._ts === cur.tsMs && x._id < cur.id)) : sorted;
+  return pageFrom(filtered, limit, (t) => `${t._ts}:${t._id}`);
+}
+
+/** Drop the internal `_ts`/`_id` keyset fields from a paginated result's items. */
+function stripKeys<T extends { _ts: number; _id: string }>(page: Page<T>): Page<Omit<T, "_ts" | "_id">> {
+  return { items: page.items.map(({ _ts, _id, ...rest }) => rest), nextCursor: page.nextCursor };
 }

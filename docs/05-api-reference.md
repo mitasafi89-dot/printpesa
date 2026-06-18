@@ -58,9 +58,9 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
 | Method | Path | Auth | Notes |
 |--------|------|------|------|
 | POST | `/affiliate/enroll` | player | ✅ become a marketer → `{ referralCode, commissionRate, status, role, referralPath }` (200); idempotent (stable code, returns the existing row on repeat) |
-| GET  | `/affiliate/summary` | marketer | clicks, signups, active players, GGR, commission |
-| GET  | `/affiliate/referrals?cursor` | marketer | referred users + their contribution |
-| GET  | `/affiliate/commissions?period` | marketer | accrued/paid commission |
+| GET  | `/affiliate/summary` | marketer | ✅ referral link, total/active(7/30d) referrals, turnover, GGR, commission accrued/paid, available |
+| GET  | `/affiliate/referrals?cursor` | marketer | ✅ referred users (username, joinedAt, lifetime GGR); cursor-paginated |
+| GET  | `/affiliate/commissions?cursor` | marketer | ✅ daily commission history (period, GGR, commission, status); cursor-paginated |
 | POST | `/affiliate/payouts` | marketer | request payout of available commission |
 
 ## 6. Engagement
@@ -126,6 +126,10 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
 - **Affiliate commission accrual (I2):** `POST /admin/affiliate/accrue` (finance_admin) runs the
   idempotent daily 20%-of-GGR revenue-share accrual (`fn_accrue_affiliate_commissions`, migration
   0018) into `affiliate_commissions`.
+- **Marketer dashboard (I3):** `GET /affiliate/summary` (referral link, total/active referrals,
+  turnover, GGR, commission accrued/paid, available), `GET /affiliate/referrals` and
+  `GET /affiliate/commissions` (cursor-paginated) — marketer-gated, leak-safe aggregations over
+  `affiliates`/`referrals`/`affiliate_commissions`/`positions`.
 - **Player + payments + admin (E2):** `/wallet`, `/chat` (GET/POST), `/deposits` +
   `/deposits/mpesa/callback`, `/withdrawals` + `/withdrawals/mpesa/result/:txId`,
   `/admin/withdrawals/:id/approve|reject`.

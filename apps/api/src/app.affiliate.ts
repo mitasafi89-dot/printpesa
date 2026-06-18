@@ -1,12 +1,14 @@
 import { Router, ApiError, requireAuth, requireRole, type Ctx } from "./http.js";
+import type { PageQuery } from "@printpesa/engine";
 import type { ApiDeps } from "./app.js";
 
 /**
  * Affiliate routes:
  *  - I1: `POST /affiliate/enroll` (marketer enrollment) + referral attribution at registration.
- *  - I2: `POST /admin/affiliate/accrue` (finance_admin) runs the daily revenue-share accrual for
- *    a trading day. Thin transport over the engine AffiliateService — invariants live in the
- *    0017/0018 RPCs.
+ *  - I2: `POST /admin/affiliate/accrue` (finance_admin) runs the daily revenue-share accrual.
+ *  - I3: marketer dashboard reads — `GET /affiliate/summary`, `/affiliate/referrals`,
+ *    `/affiliate/commissions` (marketer-gated, cursor-paginated). Thin transport over the engine
+ *    AffiliateService — invariants live in the 0017/0018 RPCs.
  */
 
 const BASE = "/api/v1";
@@ -15,8 +17,15 @@ const BASE = "/api/v1";
 const AFFILIATE_STATUS: Readonly<Record<string, number>> = {
   USER_NOT_FOUND: 404,
   NOT_FOUND: 404,
+  NOT_AFFILIATE: 404,
   INVALID_PERIOD: 400,
 };
+
+/** Parse cursor pagination params from the query string (limit clamped by the repository). */
+function pageQuery(ctx: Ctx): PageQuery {
+  const limitRaw = ctx.query.get("limit");
+  return { limit: limitRaw === null ? undefined : Number(limitRaw), cursor: ctx.query.get("cursor") };
+}
 
 /** Run an AffiliateService call, translating thrown domain error codes into controlled ApiErrors. */
 async function domain<T>(fn: () => Promise<T>): Promise<T> {
@@ -32,10 +41,11 @@ async function domain<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Register the affiliate routes (enrollment requires a bearer token; accrual is finance_admin). */
+/** Register the affiliate routes (enrollment + dashboard require a bearer token; accrual is finance_admin). */
 export function registerAffiliateRoutes(router: Router, deps: ApiDeps): void {
   const auth = requireAuth(deps.verifier);
   const financeAdmin = requireRole("finance_admin");
+  const marketer = requireRole("marketer");
 
   router.post(`${BASE}/affiliate/enroll`, auth, async (ctx: Ctx) => {
     const e = await domain(() => deps.affiliate.enroll(ctx.claims!.userId));
@@ -47,6 +57,16 @@ export function registerAffiliateRoutes(router: Router, deps: ApiDeps): void {
       referralPath: e.referralPath,
     };
   });
+
+  // ── Marketer dashboard (I3) ──
+  router.get(`${BASE}/affiliate/summary`, auth, marketer, async (ctx: Ctx) =>
+    domain(() => deps.affiliate.summary(ctx.claims!.userId)));
+
+  router.get(`${BASE}/affiliate/referrals`, auth, marketer, async (ctx: Ctx) =>
+    domain(() => deps.affiliate.listReferrals(ctx.claims!.userId, pageQuery(ctx))));
+
+  router.get(`${BASE}/affiliate/commissions`, auth, marketer, async (ctx: Ctx) =>
+    domain(() => deps.affiliate.listCommissions(ctx.claims!.userId, pageQuery(ctx))));
 
   // Operational: run the daily revenue-share accrual for a trading day (idempotent). In
   // production a daily cron calls this (or the RPC directly via service role).

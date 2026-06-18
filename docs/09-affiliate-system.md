@@ -41,7 +41,7 @@ Marketers are players who also **refer others and earn 20% revenue-share**. They
 > a bucket already `paid`/`reversed`. GGR is keyed to `game_days.trade_date` (the authoritative
 > trading day) and zero-floored per player-day. Commission is `floor(GGR × commission_rate)`.
 
-## 4. Marketer dashboard (`/affiliate/*`)
+## 4. Marketer dashboard (`/affiliate/*`) ✅ (I3, reads)
 - Summary cards: referral link, total referrals, active players (played in last 7/30d), total turnover,
   total GGR, commission accrued, commission paid, available to withdraw.
 - Tables: referrals list (joined date, status, lifetime GGR), daily commission history.

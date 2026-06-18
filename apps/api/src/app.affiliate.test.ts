@@ -104,3 +104,37 @@ test("POST /admin/affiliate/accrue: finance_admin only, accrues 20% of referred 
     assert.equal(body.totalCommissionCents, 1500);
   } finally { await api.close(); }
 });
+
+// ─────────────────────────────────── dashboard reads (I3) ─────────────────────────────────────
+test("GET /affiliate/summary + referrals + commissions: marketer-gated dashboard", async () => {
+  const api = await startTestApi();
+  try {
+    const affId = await register(api, "0712345678", "marketer");
+    const code: string = (await json(await req(api, "POST", "/api/v1/affiliate/enroll", { token: affId }))).referralCode;
+    const refId = await register(api, "0722333444", "referred", { referral_code: code });
+    api.identity.recordSettledPlay(refId, "2026-06-10", 10000, 2500); // GGR 7500 -> commission 1500
+    await req(api, "POST", "/api/v1/admin/affiliate/accrue", { token: `${affId}:finance_admin`, body: { date: "2026-06-10" } });
+
+    // a plain player cannot see the dashboard
+    assert.equal((await req(api, "GET", "/api/v1/affiliate/summary", { token: refId })).status, 403);
+
+    const s = await json(await req(api, "GET", "/api/v1/affiliate/summary", { token: `${affId}:marketer` }));
+    assert.equal(s.totalReferrals, 1);
+    assert.equal(s.turnoverCents, 10000);
+    assert.equal(s.ggrCents, 7500);
+    assert.equal(s.commissionAccruedCents, 1500);
+    assert.equal(s.availableCents, 1500);
+    assert.equal(s.referralCode, code);
+
+    const refs = await json(await req(api, "GET", "/api/v1/affiliate/referrals", { token: `${affId}:marketer` }));
+    assert.equal(refs.items.length, 1);
+    assert.equal(refs.items[0].username, "referred");
+    assert.equal(refs.items[0].lifetimeGgrCents, 7500);
+    assert.ok("nextCursor" in refs);
+
+    const coms = await json(await req(api, "GET", "/api/v1/affiliate/commissions", { token: `${affId}:marketer` }));
+    assert.equal(coms.items.length, 1);
+    assert.equal(coms.items[0].commissionCents, 1500);
+    assert.equal(coms.items[0].period, "2026-06-10");
+  } finally { await api.close(); }
+});
