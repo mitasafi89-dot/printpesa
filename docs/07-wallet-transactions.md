@@ -51,6 +51,18 @@ withdrawal: pending → (admin approve) → processing → success | failed | re
 ```
 - Failed deposits never credit. Failed/reversed withdrawals **re-credit** real_balance (reversal entry).
 
+### 4.1 Implemented as Postgres RPCs (migration 0014)
+Deposits/withdrawals are atomic + idempotent `SECURITY DEFINER` functions (service-role only),
+mirroring the 0010 game RPCs and **verified live**:
+- **`fn_create_deposit` → `fn_attach_stk` → `fn_complete_deposit`** — deposit credits `real_balance`
+  and writes a `deposit` ledger entry on `ResultCode 0`; idempotent by `checkout_request_id`.
+- **`fn_create_withdrawal`** — HOLDs funds (debit + negative `withdrawal` ledger) at request time.
+- **`fn_approve_withdrawal` / `fn_reject_withdrawal`** — admin approve (→ B2C) or reject (reverse hold).
+- **`fn_complete_withdrawal`** — B2C result: success keeps the debit; failure writes
+  `withdrawal_reversal` and re-credits. Idempotent by transaction id.
+The engine's `PgPaymentRepository` calls these; `InMemoryPaymentRepository` mirrors the contract for
+tests. See docs/08 §6 for the full implementation map.
+
 ## 5. Limits & responsible gaming
 - Min stake 50; min deposit & withdrawal configurable (default 100 / 200).
 - Per-user daily deposit limit, daily loss limit, self-exclusion (cooldown) — see Compliance doc.

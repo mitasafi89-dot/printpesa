@@ -1,5 +1,13 @@
 # 08 — M-Pesa Payments (Daraja)
 
+> Status: money state machine **implemented & verified live** — migration 0014 RPCs
+> (`fn_create_deposit`/`fn_attach_stk`/`fn_complete_deposit`,
+> `fn_create_withdrawal`/`fn_approve_withdrawal`/`fn_reject_withdrawal`/`fn_complete_withdrawal`),
+> engine `PaymentRepository` + `PaymentService` + Daraja provider (`StubDarajaClient` for dev/tests,
+> `HttpDarajaClient` for production). **Remaining:** the HTTP transport (`apps/api`) that binds these
+> methods to REST routes and the Daraja callbacks (deposits/withdrawals complete via server→server
+> HTTP callbacks, which need a public URL + live credentials).
+
 Provider: **Safaricom Daraja API**. MVP uses **Daraja defaults / sandbox** credentials, swappable
 to production. Deposits via **STK Push (Lipa na M-Pesa Online, Paybill)**; withdrawals via **B2C**.
 
@@ -63,3 +71,15 @@ Idempotency: callback keyed by `CheckoutRequestID`; duplicate callbacks are igno
 - Callback endpoints IP-allowlisted to Safaricom ranges + validate payload shape.
 - Secrets in a vault, never in code; B2C SecurityCredential encrypted with Safaricom cert.
 - All payment events audited; amounts validated server-side against the originating request.
+
+## 6. Implementation map (current)
+| Concern | Where | Notes |
+|---|---|---|
+| Atomic money state machine | `packages/db/migrations/0014` RPCs | SECURITY DEFINER, service-role only; idempotent via terminal-status guards under `FOR UPDATE`; **verified live with rollback** |
+| Deposit credit | `fn_complete_deposit` (keyed by `checkout_request_id`) | duplicate callbacks after success/failed are no-ops |
+| Withdrawal hold/reversal | `fn_create_withdrawal` (hold), `fn_reject_withdrawal`, `fn_complete_withdrawal` | success keeps the debit; reject/B2C-failure writes `withdrawal_reversal` and re-credits |
+| Repository | `apps/engine/src/payments.ts` (`PgPaymentRepository` / `InMemoryPaymentRepository`) | same contract; in-memory mirrors RPCs for tests |
+| Provider | `apps/engine/src/daraja.ts` | `StubDarajaClient` (dev/tests), `HttpDarajaClient` (OAuth cache, STK Push, B2C); `makeDarajaClient()` selects by env |
+| Orchestration | `apps/engine/src/paymentservice.ts` | validation, MSISDN normalization, provider calls, `onWithdrawalSuccess` → masked activity event |
+| Validation helpers | `packages/shared/src/payments.ts` | `normalizeMsisdn`, `validateDeposit`, `validateWithdrawal` |
+| HTTP transport (REST + callbacks) | **pending** (`apps/api`) | binds `PaymentService` methods; needs public callback URL + live creds |
