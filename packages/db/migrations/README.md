@@ -27,13 +27,15 @@ Idempotent, dependency-ordered SQL migrations for the PrintPesa Supabase Postgre
 | 0012_open_with_opened_at.sql | `fn_open_position` accepts engine-authoritative `opened_at` (deterministic recovery) |
 | 0013_seed_engagement.sql | Seed ≥500 simulated `activity_feed` + ≥500 `chat_messages` (deterministic, idempotent; `is_simulated=true` / `user_id IS NULL`) |
 | 0014_payment_rpcs.sql | Atomic + idempotent M-Pesa RPCs: deposit (`fn_create_deposit`/`fn_attach_stk`/`fn_complete_deposit`) and withdrawal (`fn_create_withdrawal` hold, `fn_approve_withdrawal`, `fn_reject_withdrawal`, `fn_complete_withdrawal` with reversal) — service-role only |
+| 0015_self_managed_auth.sql | Self-managed phone+password identity: drop `profiles_id_fkey` → `auth.users`, add locked-down `user_credentials` (RLS, no policies), atomic `fn_register_user` (SECURITY DEFINER, service-role only) |
 
 ## Applying
 With the Supabase/Postgres connection, apply each file in order. They are safe to re-run.
 
 ## ⚠️ Super-admin bootstrap (manual, required)
-The first super-admin cannot be created via SQL alone because Supabase Auth owns `auth.users`.
-Create the account by signing up with the admin phone, then promote it:
+As of `0015` identity is self-managed (phone + password, no Supabase Auth). Create the first
+super-admin by registering through the app (or calling `fn_register_user` as `service_role`),
+then promote it:
 
 ```sql
 -- replace with the admin's phone (E.164)
