@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "main": "src/server.ts",
-  "scripts": { "start": "tsx src/server.ts" },
-  "dependencies": { "@printpesa/shared": "0.1.0", "ws": "^8.17.0" }
+  "scripts": {
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@printpesa/shared": "0.1.0",
+    "ws": "^8.17.0",
+    "pg": "^8.12.0"
+  }
 }

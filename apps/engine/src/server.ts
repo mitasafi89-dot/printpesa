@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import { CurveGenerator, SettlementEngine, DEFAULT_CONFIG, type Direction } from "@printpesa/shared";
-import { InMemoryWalletStore } from "./wallet.js";
+import { InMemoryGameRepository, PgGameRepository, type GameRepository } from "./wallet.js";
 import { GameServer } from "./game.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -11,21 +11,30 @@ const serverSeedHash = createHash("sha256").update(SERVER_SEED).digest("hex");
 const cfg = DEFAULT_CONFIG;
 const curve = new CurveGenerator(SERVER_SEED, cfg);
 const settlement = new SettlementEngine(curve, cfg);
-const wallet = new InMemoryWalletStore();
-const dayStart = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
-const game = new GameServer(curve, settlement, wallet, cfg, dayStart);
+
+// Persistence: Postgres in production (atomic RPCs), in-memory for local dev.
+let repo: GameRepository;
+const usingDb = Boolean(process.env.DATABASE_URL);
+if (usingDb) {
+  const { Pool } = await import("pg");
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  repo = new PgGameRepository(pool);
+} else {
+  repo = new InMemoryGameRepository();
+}
+
+const now = new Date();
+const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+const game = new GameServer(curve, settlement, repo, cfg, dayStart);
 
 const all = new Set<WebSocket>();
 const byUser = new Map<string, Set<WebSocket>>();
 const userOf = new WeakMap<WebSocket, string>();
 
-const send = (ws: WebSocket, type: string, data: unknown) =>
-  ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type, data, ts: Date.now() }));
-const toUser = (userId: string, type: string, data: unknown) =>
-  byUser.get(userId)?.forEach((ws) => send(ws, type, data));
+const send = (ws: WebSocket, type: string, data: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type, data, ts: Date.now() }));
+const toUser = (userId: string, type: string, data: unknown) => byUser.get(userId)?.forEach((ws) => send(ws, type, data));
 const broadcast = (type: string, data: unknown) => all.forEach((ws) => send(ws, type, data));
 
-// Route engine events to the right sockets.
 game.subscribe({
   onTick: (t) => broadcast("tick", t),
   onUpdate: (u) => { const p = game.getPosition(u.positionId); if (p) toUser(p.userId, "position_update", u); },
@@ -33,6 +42,7 @@ game.subscribe({
     positionId: e.position.id, result: e.position.outcome.result, lockedMultiplier: e.lockedMultiplier,
     payoutCents: e.payoutCents, pnlCents: e.pnlCents, balance: e.balance, mode: e.mode,
   }),
+  onError: (err, ctx) => console.error(`[engine] ${ctx}:`, err.message),
 });
 game.start();
 
@@ -46,22 +56,19 @@ wss.on("connection", (ws) => {
     let msg: any; try { msg = JSON.parse(String(raw)); } catch { return send(ws, "error", { code: "BAD_JSON" }); }
     try {
       switch (msg.type) {
-        case "auth": { // PROTOTYPE auth: real build verifies a Supabase JWT here.
+        case "auth": { // PROTOTYPE auth (replaced by verified JWT in the next issue).
           const userId = String(msg.data?.userId ?? "");
           if (!userId) return send(ws, "error", { code: "AUTH_REQUIRED" });
           userOf.set(ws, userId);
           (byUser.get(userId) ?? byUser.set(userId, new Set()).get(userId)!).add(ws);
-          if ((await wallet.getBalance(userId)) === 0) wallet.seed(userId, 100000); // demo float KES 1000
-          return send(ws, "balance", { real: await wallet.getBalance(userId), currency: "KES" });
+          if (!usingDb && repo instanceof InMemoryGameRepository && (await repo.getBalance(userId)) === 0) repo.seed(userId, 100000);
+          return send(ws, "balance", { real: await repo.getBalance(userId), currency: "KES" });
         }
         case "open_position": {
           const userId = userOf.get(ws); if (!userId) return send(ws, "error", { code: "AUTH_REQUIRED" });
-          const p = await game.openPosition({
-            userId, stakeCents: Number(msg.data.stakeCents),
-            direction: msg.data.direction as Direction, durationS: msg.data.durationS,
-          });
+          const { position: p, balance } = await game.openPosition({ userId, stakeCents: Number(msg.data.stakeCents), direction: msg.data.direction as Direction, durationS: msg.data.durationS });
           send(ws, "position_opened", { positionId: p.id, entryRate: p.outcome.entryRate, direction: p.direction, stakeCents: p.stakeCents, durationS: p.durationS, expiresAtMs: p.expiresAtMs });
-          return send(ws, "balance", { real: await wallet.getBalance(userId), currency: "KES" });
+          return send(ws, "balance", { real: balance, currency: "KES" });
         }
         case "sell": {
           const userId = userOf.get(ws); if (!userId) return send(ws, "error", { code: "AUTH_REQUIRED" });
@@ -73,11 +80,7 @@ wss.on("connection", (ws) => {
     } catch (err: any) { send(ws, "error", { code: "ENGINE_ERROR", message: String(err?.message ?? err) }); }
   });
 
-  ws.on("close", () => {
-    all.delete(ws);
-    const u = userOf.get(ws); if (u) byUser.get(u)?.delete(ws);
-    broadcast("online", { count: all.size });
-  });
+  ws.on("close", () => { all.delete(ws); const u = userOf.get(ws); if (u) byUser.get(u)?.delete(ws); broadcast("online", { count: all.size }); });
 });
 
-console.log(`[engine] listening on ws://localhost:${PORT}  seedHash=${serverSeedHash.slice(0, 12)}…  edge=${(cfg.houseEdge * 100).toFixed(0)}%`);
+console.log(`[engine] listening on ws://localhost:${PORT}  store=${usingDb ? "postgres" : "in-memory"}  seedHash=${serverSeedHash.slice(0, 12)}…  edge=${(cfg.houseEdge * 100).toFixed(0)}%`);
