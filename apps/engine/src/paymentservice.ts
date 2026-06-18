@@ -1,0 +1,73 @@
+import { normalizeMsisdn, MIN_DEPOSIT_CENTS, MIN_WITHDRAWAL_CENTS, type Cents } from "@printpesa/shared";
+import type { PaymentRepository, CompleteResult, CreateWithdrawalResult } from "./payments.js";
+import type { DarajaClient } from "./daraja.js";
+
+/**
+ * PaymentService orchestrates the deposit/withdrawal flows on top of the atomic RPCs
+ * (PaymentRepository) and the Daraja provider. It is transport-agnostic: an HTTP layer
+ * (apps/api) binds these methods to REST routes + Daraja callbacks. All money correctness
+ * (credit/hold/reversal/idempotency) lives in the repository RPCs; this layer adds input
+ * validation, MSISDN normalization, provider calls, and post-settlement event hooks.
+ */
+export interface PaymentEvents {
+  /** Fired once when a withdrawal is confirmed paid (for the real activity feed). */
+  onWithdrawalSuccess?(e: { userId: string; amountCents: Cents }): void;
+}
+export interface PaymentServiceOptions { minDepositCents?: Cents; minWithdrawalCents?: Cents; events?: PaymentEvents; }
+
+export class PaymentService {
+  private readonly minDeposit: Cents;
+  private readonly minWithdrawal: Cents;
+  private readonly events: PaymentEvents;
+  constructor(private readonly repo: PaymentRepository, private readonly daraja: DarajaClient, opts: PaymentServiceOptions = {}) {
+    this.minDeposit = opts.minDepositCents ?? MIN_DEPOSIT_CENTS;
+    this.minWithdrawal = opts.minWithdrawalCents ?? MIN_WITHDRAWAL_CENTS;
+    this.events = opts.events ?? {};
+  }
+
+  // ── Deposit (STK Push) ──
+  async initiateDeposit(userId: string, amountCents: number, phoneRaw: string): Promise<{ txId: string; checkoutRequestId: string }> {
+    if (!Number.isInteger(amountCents) || amountCents <= 0) throw new Error("INVALID_AMOUNT");
+    if (amountCents < this.minDeposit) throw new Error("BELOW_MIN");
+    const msisdn = normalizeMsisdn(phoneRaw);
+    const txId = await this.repo.createDeposit(userId, amountCents, msisdn);
+    const stk = await this.daraja.stkPush({ amountCents, msisdn, accountRef: "PrintPesa", desc: "Deposit" });
+    await this.repo.attachStk(txId, stk.merchantRequestId, stk.checkoutRequestId);
+    return { txId, checkoutRequestId: stk.checkoutRequestId };
+  }
+  /** Daraja STK callback handler (idempotent). resultCode 0 => credit. */
+  handleStkCallback(checkoutRequestId: string, resultCode: number, resultDesc: string, receipt: string | null, raw: unknown): Promise<CompleteResult> {
+    return this.repo.completeDeposit(checkoutRequestId, resultCode, resultDesc, receipt, raw);
+  }
+
+  // ── Withdrawal (B2C) ──
+  /** Player requests a withdrawal: validates and HOLDS funds atomically (status pending). */
+  async requestWithdrawal(userId: string, amountCents: number, phoneRaw: string): Promise<CreateWithdrawalResult> {
+    if (!Number.isInteger(amountCents) || amountCents <= 0) throw new Error("INVALID_AMOUNT");
+    if (amountCents < this.minWithdrawal) throw new Error("BELOW_MIN");
+    const msisdn = normalizeMsisdn(phoneRaw);
+    return this.repo.createWithdrawal(userId, amountCents, msisdn, this.minWithdrawal);
+  }
+  /** Finance admin approves: flips to processing and dispatches the B2C payment. */
+  async approveWithdrawal(txId: string, adminId: string): Promise<{ approved: boolean; conversationId?: string }> {
+    const ap = await this.repo.approveWithdrawal(txId, adminId);
+    if (!ap.approved || ap.amountCents === null || ap.phone === null) return { approved: false };
+    const b2c = await this.daraja.b2cPayment({ amountCents: ap.amountCents, msisdn: ap.phone, remarks: "Withdrawal" });
+    return { approved: true, conversationId: b2c.conversationId };
+  }
+  /** Finance admin rejects a pending withdrawal: reverses the hold. */
+  rejectWithdrawal(txId: string, adminId: string): Promise<{ reversed: boolean; newBalance: Cents }> {
+    return this.repo.rejectWithdrawal(txId, adminId);
+  }
+  /** Daraja B2C result handler (idempotent). Success keeps the debit; failure reverses it. */
+  async handleB2cResult(txId: string, resultCode: number, conversationId: string | null, receipt: string | null, raw: unknown): Promise<CompleteResult> {
+    const res = await this.repo.completeWithdrawal(txId, resultCode, conversationId, receipt, raw);
+    if (res.applied && res.status === "success") {
+      const tx = await this.repo.getTransaction(txId);
+      if (tx) this.events.onWithdrawalSuccess?.({ userId: tx.userId, amountCents: tx.amountCents });
+    }
+    return res;
+  }
+
+  getBalance(userId: string): Promise<Cents> { return this.repo.getBalance(userId); }
+}
