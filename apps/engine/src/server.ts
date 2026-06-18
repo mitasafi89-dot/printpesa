@@ -3,6 +3,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { CurveGenerator, SettlementEngine, DEFAULT_CONFIG, type Direction } from "@printpesa/shared";
 import { InMemoryGameRepository, PgGameRepository, type GameRepository } from "./wallet.js";
 import { GameServer } from "./game.js";
+import { makeVerifier } from "./auth.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const SERVER_SEED = process.env.SERVER_SEED ?? "dev-daily-seed-0001";
@@ -22,6 +23,9 @@ if (usingDb) {
 } else {
   repo = new InMemoryGameRepository();
 }
+
+const verifier = makeVerifier();
+if (usingDb && !verifier) throw new Error("AUTH: a JWT verifier is required when DATABASE_URL is set (set SUPABASE_JWT_SECRET or SUPABASE_JWKS_URL)");
 
 const now = new Date();
 const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -56,9 +60,16 @@ wss.on("connection", (ws) => {
     let msg: any; try { msg = JSON.parse(String(raw)); } catch { return send(ws, "error", { code: "BAD_JSON" }); }
     try {
       switch (msg.type) {
-        case "auth": { // PROTOTYPE auth (replaced by verified JWT in the next issue).
-          const userId = String(msg.data?.userId ?? "");
-          if (!userId) return send(ws, "error", { code: "AUTH_REQUIRED" });
+        case "auth": {
+          let userId: string;
+          if (verifier) {
+            try { userId = (await verifier(String(msg.data?.token ?? ""))).userId; }
+            catch { return send(ws, "error", { code: "AUTH_INVALID" }); }
+          } else {
+            // dev only: no verifier configured and no DB -> trust provided userId (loud warning at boot)
+            userId = String(msg.data?.userId ?? "");
+            if (!userId) return send(ws, "error", { code: "AUTH_REQUIRED" });
+          }
           userOf.set(ws, userId);
           (byUser.get(userId) ?? byUser.set(userId, new Set()).get(userId)!).add(ws);
           if (!usingDb && repo instanceof InMemoryGameRepository && (await repo.getBalance(userId)) === 0) repo.seed(userId, 100000);
@@ -83,4 +94,5 @@ wss.on("connection", (ws) => {
   ws.on("close", () => { all.delete(ws); const u = userOf.get(ws); if (u) byUser.get(u)?.delete(ws); broadcast("online", { count: all.size }); });
 });
 
-console.log(`[engine] listening on ws://localhost:${PORT}  store=${usingDb ? "postgres" : "in-memory"}  seedHash=${serverSeedHash.slice(0, 12)}…  edge=${(cfg.houseEdge * 100).toFixed(0)}%`);
+if (!verifier) console.warn("[engine] WARNING: no JWT verifier configured — DEV auth (trusts client userId). Do NOT use in production.");
+console.log(`[engine] listening on ws://localhost:${PORT}  store=${usingDb ? "postgres" : "in-memory"}  auth=${verifier ? "jwt" : "dev"}  seedHash=${serverSeedHash.slice(0, 12)}…  edge=${(cfg.houseEdge * 100).toFixed(0)}%`);
