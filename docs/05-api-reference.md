@@ -123,6 +123,9 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   through `POST /auth/register` via optional `referral_code`. Both invariants live in the
   migration-0017 RPCs (`fn_affiliate_enroll`, extended `fn_register_user`). See
   [09 — Affiliate System](09-affiliate-system.md).
+- **Affiliate commission accrual (I2):** `POST /admin/affiliate/accrue` (finance_admin) runs the
+  idempotent daily 20%-of-GGR revenue-share accrual (`fn_accrue_affiliate_commissions`, migration
+  0018) into `affiliate_commissions`.
 - **Player + payments + admin (E2):** `/wallet`, `/chat` (GET/POST), `/deposits` +
   `/deposits/mpesa/callback`, `/withdrawals` + `/withdrawals/mpesa/result/:txId`,
   `/admin/withdrawals/:id/approve|reject`.

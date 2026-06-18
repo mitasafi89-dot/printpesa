@@ -30,6 +30,7 @@ Idempotent, dependency-ordered SQL migrations for the PrintPesa Supabase Postgre
 | 0015_self_managed_auth.sql | Self-managed phone+password identity: drop `profiles_id_fkey` → `auth.users`, add locked-down `user_credentials` (RLS, no policies), atomic `fn_register_user` (SECURITY DEFINER, service-role only) |
 | 0016_age_verification.sql | Age-gate (≥18) for real-money play: `kyc_status` default → `'none'`, age check in `fn_create_deposit` / `fn_open_position` (`AGE_NOT_VERIFIED`), and `fn_set_basic_profile` (name + DOB, DOB immutable, `AGE_RESTRICTED` for minors; service-role only) |
 | 0017_affiliate_enroll_attribution.sql | Affiliate foundation (M5): idempotent `fn_affiliate_enroll` (mints a unique URL-safe `referral_code`, promotes player→marketer) + `fn_register_user` extended with optional `p_referral_code` for atomic first-touch, permanent referral attribution (`profiles.referred_by` + `referrals` row; unknown/suspended code ignored) — both SECURITY DEFINER, service-role only |
+| 0018_affiliate_commission_accrual.sql | Daily revenue-share accrual: `fn_accrue_affiliate_commissions(period)` upserts `affiliate_commissions` with `commission = floor(rate × GGR)`, where per-player-day `GGR = greatest(0, Σ(stake − payout))` over positions settled on that `game_days.trade_date`; idempotent, never re-touches paid/reversed buckets; SECURITY DEFINER, service-role only |
 
 ## Applying
 With the Supabase/Postgres connection, apply each file in order. They are safe to re-run.

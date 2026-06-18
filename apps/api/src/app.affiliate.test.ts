@@ -78,3 +78,29 @@ test("POST /auth/register → 400 INVALID_REFERRAL_CODE on a malformed code", as
     assert.equal((await json(res)).error.code, "INVALID_REFERRAL_CODE");
   } finally { await api.close(); }
 });
+
+// ─────────────────────────────────────── accrual (admin) ──────────────────────────────────────
+test("POST /admin/affiliate/accrue: finance_admin only, accrues 20% of referred GGR", async () => {
+  const api = await startTestApi();
+  try {
+    const affId = await register(api, "0712345678", "marketer");
+    const code: string = (await json(await req(api, "POST", "/api/v1/affiliate/enroll", { token: affId }))).referralCode;
+    const refId = await register(api, "0722333444", "referred", { referral_code: code });
+    api.identity.recordSettledPlay(refId, "2026-06-10", 10000, 2500); // GGR 7500 -> commission 1500
+
+    // a plain player cannot accrue
+    const forbidden = await req(api, "POST", "/api/v1/admin/affiliate/accrue", { token: refId, body: { date: "2026-06-10" } });
+    assert.equal(forbidden.status, 403);
+
+    // missing date -> 400
+    const bad = await req(api, "POST", "/api/v1/admin/affiliate/accrue", { token: `${affId}:finance_admin`, body: {} });
+    assert.equal(bad.status, 400);
+
+    // finance_admin succeeds
+    const ok = await req(api, "POST", "/api/v1/admin/affiliate/accrue", { token: `${affId}:finance_admin`, body: { date: "2026-06-10" } });
+    assert.equal(ok.status, 200);
+    const body = await json(ok);
+    assert.equal(body.buckets, 1);
+    assert.equal(body.totalCommissionCents, 1500);
+  } finally { await api.close(); }
+});

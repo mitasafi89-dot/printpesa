@@ -24,8 +24,8 @@ export interface ApiDeps {
   verifier: Verifier | null;
   /** Self-managed phone+password auth + basic-KYC profile (G3/G4/H1). */
   auth: Pick<AuthService, "register" | "login" | "me" | "completeBasicProfile">;
-  /** Marketer enrollment (I1): mint a stable referral code and promote player -> marketer. */
-  affiliate: Pick<AffiliateService, "enroll">;
+  /** Marketer enrollment + commission accrual (I1/I2). */
+  affiliate: Pick<AffiliateService, "enroll" | "accrueDaily">;
   /** Public game configuration snapshot source. */
   config: GameConfig;
   /** Public fairness record for a game-day id (commitment always; seed only after reveal). */

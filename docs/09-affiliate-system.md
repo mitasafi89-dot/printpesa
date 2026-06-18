@@ -23,7 +23,7 @@ Marketers are players who also **refer others and earn 20% revenue-share**. They
   Self-referral is structurally impossible (phone is unique, so a brand-new account can never be
   the referring affiliate).
 
-## 3. Commission model — 20% revenue-share on net loss (GGR)
+## 3. Commission model — 20% revenue-share on net loss (GGR) ✅ (I2)
 - **GGR (net loss)** of a referred player over a period = `Σ stakes − Σ payouts` (only positive
   contributes; winning days don't create negative commission for the affiliate — carried/zero-floored).
 - **Commission** = `GGR × 0.20`, accrued **daily** into `affiliate_commissions` (`status='accrued'`).
@@ -34,6 +34,12 @@ Marketers are players who also **refer others and earn 20% revenue-share**. They
 
 > Alternative models (CPA, deposit-%, hybrid) are supported by the schema but **revenue-share is the
 > configured MVP default**. Rate is per-affiliate editable by admin.
+
+> **Implemented (I2):** accrual is the `fn_accrue_affiliate_commissions(period)` RPC (migration 0018),
+> run once per trading day by an operator/cron via `POST /admin/affiliate/accrue` (finance_admin) or
+> directly as `service_role`. It is idempotent (settled positions never change) and never re-touches
+> a bucket already `paid`/`reversed`. GGR is keyed to `game_days.trade_date` (the authoritative
+> trading day) and zero-floored per player-day. Commission is `floor(GGR × commission_rate)`.
 
 ## 4. Marketer dashboard (`/affiliate/*`)
 - Summary cards: referral link, total referrals, active players (played in last 7/30d), total turnover,

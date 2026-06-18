@@ -63,3 +63,22 @@ test("AuthService.register: rejects a malformed referral code, attributes a vali
   const ok = await auth.register({ phone: "0700000008", username: "player_e", password: "Password1", referralCode });
   assert.equal(repo.referredByOf(ok.userId), aff.userId);
 });
+
+test("accrueDaily: 20% of zero-floored daily GGR; idempotent; rejects a malformed period", async () => {
+  const repo = new InMemoryIdentityRepository();
+  const svc = new AffiliateService(repo);
+  const aff = await repo.register("254700000010", "mk_acc", HASH);
+  const code = (await svc.enroll(aff.userId)).referralCode;
+  const ref = await repo.register("254700000011", "pl_acc", HASH, code);
+
+  // loss day: (10000-2500) + (5000-0) = 12500 GGR -> floor(12500*0.20) = 2500 commission
+  repo.recordSettledPlay(ref.userId, "2026-06-10", 10000, 2500);
+  repo.recordSettledPlay(ref.userId, "2026-06-10", 5000, 0);
+  // winning day: (1000-5000) = -4000 -> floored to 0 -> no bucket
+  repo.recordSettledPlay(ref.userId, "2026-06-11", 1000, 5000);
+
+  assert.deepEqual(await svc.accrueDaily("2026-06-10"), { buckets: 1, totalCommissionCents: 2500 });
+  assert.deepEqual(await svc.accrueDaily("2026-06-11"), { buckets: 0, totalCommissionCents: 0 });
+  assert.deepEqual(await svc.accrueDaily("2026-06-10"), { buckets: 1, totalCommissionCents: 2500 }); // idempotent
+  await assert.rejects(svc.accrueDaily("06/10/2026"), /INVALID_PERIOD/);
+});

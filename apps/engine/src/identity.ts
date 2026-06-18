@@ -28,6 +28,9 @@ export interface AffiliateView {
   userId: string; referralCode: string; commissionRate: number; status: string; role: string;
 }
 
+/** Result of a daily commission-accrual run. */
+export interface AffiliateAccrualResult { buckets: number; totalCommissionCents: number; }
+
 export interface IdentityRepository {
   /**
    * Atomically create profile + wallet + credentials. An optional referral code (already
@@ -42,8 +45,18 @@ export interface IdentityRepository {
   getProfile(userId: string): Promise<ProfileRow | null>;
   /** Set basic KYC (name + DOB). Throws INVALID_NAME / INVALID_DOB / AGE_RESTRICTED / DOB_IMMUTABLE / USER_NOT_FOUND. */
   setBasicProfile(userId: string, fullName: string, dateOfBirth: string): Promise<ProfileRow>;
+}
+
+/**
+ * AffiliateRepository: durable boundary for the marketer/affiliate domain — enrollment and
+ * daily revenue-share accrual (dashboard reads + payouts extend this interface). Maps to the
+ * migration 0017/0018 RPCs; the in-memory impl mirrors the same contracts for tests.
+ */
+export interface AffiliateRepository {
   /** Idempotently enroll the user as an affiliate (marketer) with a stable referral code. Throws USER_NOT_FOUND. */
   enrollAffiliate(userId: string): Promise<AffiliateView>;
+  /** Accrue commission for one trading day (`YYYY-MM-DD`) across all referred players. Idempotent. */
+  accrueCommissions(period: string): Promise<AffiliateAccrualResult>;
 }
 
 /** Re-raise the bare error code the RPCs raise instead of the wrapped pg message. */
@@ -61,7 +74,7 @@ function toIsoDate(v: unknown): string | null {
 }
 
 /** Postgres-backed identity, calling the 0015/0016 RPCs + profile reads. */
-export class PgIdentityRepository implements IdentityRepository {
+export class PgIdentityRepository implements IdentityRepository, AffiliateRepository {
   constructor(private readonly q: Querier) {}
   async register(phone: string, username: string, passwordHash: string, referralCode?: string): Promise<RegisteredUser> {
     try {
@@ -82,6 +95,12 @@ export class PgIdentityRepository implements IdentityRepository {
         commissionRate: Number(x.commission_rate), status: String(x.status), role: String(x.role),
       };
     } catch (e) { mapPgError(e); }
+  }
+  async accrueCommissions(period: string): Promise<AffiliateAccrualResult> {
+    const r = await this.q.query(
+      "select buckets, total_commission from fn_accrue_affiliate_commissions($1)", [period]);
+    const x = r.rows[0];
+    return { buckets: Number(x.buckets), totalCommissionCents: Number(x.total_commission) };
   }
   async findByPhone(phone: string): Promise<CredentialRecord | null> {
     const r = await this.q.query(
@@ -122,15 +141,19 @@ interface MemUser {
 }
 
 interface MemAffiliate { userId: string; referralCode: string; commissionRate: number; status: string; }
+interface MemPlay { referredUser: string; period: string; stakeCents: number; payoutCents: number; openedAtMs: number; }
+interface MemCommission { affiliateId: string; referredUser: string; period: string; ggr: number; commission: number; status: string; }
 
 /** In-memory identity store mirroring the RPC contracts (tests + dev). */
-export class InMemoryIdentityRepository implements IdentityRepository {
+export class InMemoryIdentityRepository implements IdentityRepository, AffiliateRepository {
   private readonly byPhone = new Map<string, MemUser>();
   private readonly byId = new Map<string, MemUser>();
   private readonly usernames = new Set<string>();
   private readonly affiliates = new Map<string, MemAffiliate>();      // userId -> affiliate
   private readonly byReferralCode = new Map<string, string>();         // code -> userId
-  private readonly referrals: Array<{ affiliateId: string; referredUser: string }> = [];
+  private readonly referrals: Array<{ affiliateId: string; referredUser: string; createdAtMs: number }> = [];
+  private readonly plays: MemPlay[] = [];
+  private readonly commissions: MemCommission[] = [];
   async register(phone: string, username: string, passwordHash: string, referralCode?: string): Promise<RegisteredUser> {
     if (phone.length < 8) throw new Error("INVALID_PHONE");
     if (username.length < 3) throw new Error("INVALID_USERNAME");
@@ -148,7 +171,7 @@ export class InMemoryIdentityRepository implements IdentityRepository {
       const aff = affUserId ? this.affiliates.get(affUserId) : undefined;
       if (aff && aff.status === "active" && aff.userId !== u.userId) {
         u.referredBy = aff.userId;
-        this.referrals.push({ affiliateId: aff.userId, referredUser: u.userId });
+        this.referrals.push({ affiliateId: aff.userId, referredUser: u.userId, createdAtMs: Date.now() });
       }
     }
     return { userId: u.userId, role: u.role };
@@ -183,6 +206,32 @@ export class InMemoryIdentityRepository implements IdentityRepository {
       if (u.role === "player") u.role = "marketer"; // never downgrade a privileged role
     }
     return { userId, referralCode: aff.referralCode, commissionRate: aff.commissionRate, status: aff.status, role: u.role };
+  }
+  async accrueCommissions(period: string): Promise<AffiliateAccrualResult> {
+    let buckets = 0; let total = 0;
+    for (const [affUserId, aff] of this.affiliates) {
+      const referred = this.referrals.filter((r) => r.affiliateId === affUserId).map((r) => r.referredUser);
+      for (const ru of referred) {
+        const dayPlays = this.plays.filter((p) => p.referredUser === ru && p.period === period);
+        if (dayPlays.length === 0) continue;
+        const ggr = Math.max(0, dayPlays.reduce((s, p) => s + (p.stakeCents - p.payoutCents), 0));
+        if (ggr <= 0) continue;
+        const commission = Math.floor(ggr * aff.commissionRate);
+        const existing = this.commissions.find((c) => c.affiliateId === affUserId && c.referredUser === ru && c.period === period);
+        if (existing) {
+          if (existing.status !== "accrued") continue; // paid/reversed buckets are never re-touched
+          existing.ggr = ggr; existing.commission = commission;
+        } else {
+          this.commissions.push({ affiliateId: affUserId, referredUser: ru, period, ggr, commission, status: "accrued" });
+        }
+        buckets += 1; total += commission;
+      }
+    }
+    return { buckets, totalCommissionCents: total };
+  }
+  /** Test/dev seam: record a settled play for a referred user on a trading day (drives accrual + turnover). */
+  recordSettledPlay(referredUser: string, period: string, stakeCents: number, payoutCents: number, openedAtMs: number = Date.now()): void {
+    this.plays.push({ referredUser, period, stakeCents, payoutCents, openedAtMs });
   }
   private toProfile(u: MemUser): ProfileRow {
     return {
