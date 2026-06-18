@@ -50,6 +50,15 @@ the edge becomes behaviour-dependent (and realistically far below 75%); say so a
 `value(t)` and `τ_dir` derive from the committed daily `SERVER_SEED`; publish `sha256(SERVER_SEED)`
 in advance and reveal the seed later so anyone can recompute every outcome (docs/02 §4).
 
-## Not in this prototype (next steps)
-Supabase-backed `WalletStore`, real JWT auth on the socket, Redis fan-out for multi-instance tick
-broadcast, chat/activity feed channels, persistence of positions/rounds to Postgres.
+## Persistence & auth (implemented)
+- **`GameRepository`** abstraction with two implementations:
+  - `PgGameRepository` — calls the atomic RPCs `fn_open_position` / `fn_settle_position`
+    (migration 0010) via `pg`; used when `DATABASE_URL` is set.
+  - `InMemoryGameRepository` — dev/test, mirrors the same contract.
+- **JWT auth** on the socket via `jose`: HS256 (`SUPABASE_JWT_SECRET`) or asymmetric JWKS
+  (`SUPABASE_JWKS_URL`); user derived from verified `sub`. Fails closed when `DATABASE_URL` is set.
+
+## Not yet (next steps)
+Redis fan-out for multi-instance tick broadcast, chat/activity-feed channels, daily seed rotation +
+fairness reveal endpoint, persisting live position state for crash recovery, calibration caching to
+avoid the ~3s boot recalibration.

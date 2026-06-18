@@ -32,6 +32,18 @@ commit;
 - **Payout** credits `real_balance` (winnings are withdrawable) and writes a `payout` ledger entry.
 - **Idempotency:** settling a position is keyed by `position_id`; re-runs are no-ops.
 
+### 3.1 Implemented as Postgres RPCs (migration 0010)
+Two `SECURITY DEFINER` functions (service-role only) make open/settle atomic + idempotent:
+- **`fn_open_position(user, stake, direction, entry_rate, duration_s, game_day, nonce)`** — locks the
+  wallet (`FOR UPDATE`), verifies funds, debits `real_balance`, inserts the `positions` row (status
+  `open`, **without** the outcome) and a `stake` ledger entry; returns `(position_id, new_balance)`.
+- **`fn_settle_position(position, exit_rate, result, multiplier, payout)`** — locks the position; if
+  already settled it is a **no-op** (idempotent); otherwise updates the row, credits `real_balance`
+  (if payout > 0) and writes a `payout` ledger entry; returns `(settled, new_balance)`.
+The engine's `PgGameRepository` calls these; the in-memory repository mirrors the same contract for
+tests. Verified live against the database (balances, ledger rows, idempotent re-settle, insufficient
+funds).
+
 ## 4. Transaction states (deposits/withdrawals)
 ```
 deposit:    pending → processing → success | failed

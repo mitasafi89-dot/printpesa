@@ -43,3 +43,13 @@ Role is stored on `profiles.role`; API middleware + Postgres RLS both enforce it
 - OTP brute-force protection: max 5 attempts, then 1-hour lockout per phone.
 - Device/session list; suspicious-login flag (new device + immediate withdrawal).
 - All auth events written to `audit_log`.
+
+## 6. Engine (WebSocket) authentication
+The realtime engine independently **verifies the Supabase JWT** on the socket `auth` message and
+derives the user from the token's `sub` (never trusts a client-supplied id):
+- **HS256** using the Supabase project JWT secret (`SUPABASE_JWT_SECRET`), or
+- **Asymmetric (RS256/ES256)** via the project JWKS (`SUPABASE_JWKS_URL`), with optional issuer/
+  audience pinning.
+Verification uses the vetted `jose` library; expired/tampered/missing-`sub` tokens are rejected with
+`AUTH_INVALID`. The engine **fails closed**: when `DATABASE_URL` is set (production), a verifier is
+required or the engine refuses to start.

@@ -21,7 +21,7 @@ Message envelope: JSON `{ "type": string, "data": object, "ts": epoch_ms }`.
 ## 2. Client → Server events
 | type | data | description |
 |------|------|-------------|
-| `auth` | `{ jwt }` | authenticate the socket |
+| `auth` | `{ token }` | authenticate the socket with a Supabase JWT (verified server-side; invalid → `error` `AUTH_INVALID`) |
 | `open_position` | `{ stake, direction, duration }` | place BUY/SELL |
 | `sell` | `{ positionId }` | manual cashout before timer |
 | `subscribe_chat` | `{}` | join chat stream |
