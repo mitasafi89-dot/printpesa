@@ -13,6 +13,7 @@
 export * from "./auth.js";
 export * from "./identity.js";
 export * from "./authservice.js";
+export * from "./affiliateservice.js";
 export * from "./paging.js";
 export * from "./wallet.js";
 export * from "./engagement.js";

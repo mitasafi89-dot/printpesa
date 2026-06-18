@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { DEFAULT_CONFIG, type Cents } from "@printpesa/shared";
 import {
   InMemoryEngagementRepository, InMemoryPaymentRepository, InMemoryGameRepository, StubDarajaClient,
-  InMemoryIdentityRepository, PaymentService, ChatService, ActivityService, AuthService, maskHandle,
+  InMemoryIdentityRepository, PaymentService, ChatService, ActivityService, AuthService, AffiliateService, maskHandle,
   type FairnessRecord, type AuthClaims, type Verifier,
 } from "@printpesa/engine";
 import { createApp, type ApiDeps, type WalletBalance } from "./app.js";
@@ -31,6 +31,7 @@ export const TEST_ADMIN = "u-admin";
 export interface TestApi {
   baseUrl: string;
   deps: ApiDeps;
+  identity: InMemoryIdentityRepository;
   engage: InMemoryEngagementRepository;
   payRepo: InMemoryPaymentRepository;
   gameRepo: InMemoryGameRepository;
@@ -77,11 +78,14 @@ export async function startTestApi(opts: TestApiOptions = {}): Promise<TestApi> 
   ]);
   const bonus = new Map<string, Cents>();
 
-  const auth = new AuthService(new InMemoryIdentityRepository(), { jwtSecret: "test-secret-which-is-long-enough-123456", jwtTtlSeconds: 3600 });
+  const identity = new InMemoryIdentityRepository();
+  const auth = new AuthService(identity, { jwtSecret: "test-secret-which-is-long-enough-123456", jwtTtlSeconds: 3600 });
+  const affiliate = new AffiliateService(identity);
 
   const deps: ApiDeps = {
     verifier: stubVerifier(),
     auth,
+    affiliate,
     config: DEFAULT_CONFIG,
     fairnessById: async (id) => fairness.get(id) ?? null,
     activity: { recent: (limit) => engage.listRecentActivity(limit) },
@@ -103,7 +107,7 @@ export async function startTestApi(opts: TestApiOptions = {}): Promise<TestApi> 
 
   return {
     baseUrl: `http://127.0.0.1:${port}`,
-    deps, engage, payRepo, gameRepo, daraja, fairness, bonus, withdrawalSuccesses,
+    deps, identity, engage, payRepo, gameRepo, daraja, fairness, bonus, withdrawalSuccesses,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

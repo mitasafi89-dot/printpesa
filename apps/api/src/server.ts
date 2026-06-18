@@ -1,7 +1,7 @@
 import { DEFAULT_CONFIG } from "@printpesa/shared";
 import {
   PgGameRepository, PgEngagementRepository, PgPaymentRepository, PgIdentityRepository,
-  PaymentService, ChatService, ActivityService, AuthService, makeDarajaClient, makeVerifier, maskHandle,
+  PaymentService, ChatService, ActivityService, AuthService, AffiliateService, makeDarajaClient, makeVerifier, maskHandle,
   type GameRepository, type EngagementRepository, type PaymentRepository,
   type Querier, type FairnessRecord,
 } from "@printpesa/engine";
@@ -60,15 +60,18 @@ async function buildDeps(): Promise<ApiDeps> {
   if (!jwtSecret) {
     throw new Error("AUTH: SUPABASE_JWT_SECRET is required for self-managed register/login (HS256 issuance)");
   }
-  const auth = new AuthService(new PgIdentityRepository(q), {
+  const identity = new PgIdentityRepository(q);
+  const auth = new AuthService(identity, {
     jwtSecret,
     ...(process.env.SUPABASE_JWT_ISSUER ? { issuer: process.env.SUPABASE_JWT_ISSUER } : {}),
     ...(process.env.SUPABASE_JWT_AUD ? { audience: process.env.SUPABASE_JWT_AUD } : {}),
   });
+  const affiliate = new AffiliateService(identity);
 
   return {
     verifier,
     auth,
+    affiliate,
     config: DEFAULT_CONFIG,
     fairnessById: async (gameDayId: number): Promise<FairnessRecord | null> => {
       const r = await q.query(

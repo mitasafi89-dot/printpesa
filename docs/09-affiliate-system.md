@@ -2,15 +2,26 @@
 
 Marketers are players who also **refer others and earn 20% revenue-share**. They can both play and earn.
 
-## 1. Becoming a marketer
+## 1. Becoming a marketer ✅ (I1)
 - Any player calls `POST /affiliate/enroll` → creates an `affiliates` row with a unique
   `referral_code` (and `commission_rate = 0.20`) and sets `profiles.role = 'marketer'`.
 - They get a shareable link: `https://printpesa.../r/<referral_code>`.
+- **Implemented (I1):** enrollment is **idempotent** — repeat calls return the existing stable
+  code and never re-mint or downgrade a privileged role. The code uses a Crockford-style
+  alphabet (no `0/O/1/I/L`). Logic lives in the `fn_affiliate_enroll` RPC (service-role only,
+  migration 0017); the API returns `{ referralCode, commissionRate, status, role, referralPath }`.
 
-## 2. Attribution
-- A new user arriving via `/r/<code>` carries the code through signup (`POST /auth/verify-otp` with
-  `referral_code`). On account creation: `profiles.referred_by = affiliate_id` and a `referrals` row
-  is inserted (one referral per user, **first-touch, permanent**).
+## 2. Attribution ✅ (I1)
+- A new user arriving via `/r/<code>` carries the code through signup (`POST /auth/register` with
+  an optional `referral_code` — auth is self-managed phone+password, no OTP). On account creation:
+  `profiles.referred_by = affiliate_id` and a `referrals` row is inserted (one referral per user,
+  **first-touch, permanent**).
+- **Implemented (I1):** attribution is written **atomically inside `fn_register_user`** (migration
+  0017), so it can never be lost or double-applied (`referrals.referred_user` is `UNIQUE`). Codes
+  are matched case-insensitively; an **unknown or suspended** code is silently ignored so a stale
+  link never blocks a signup, while a **malformed** code is rejected up front (`INVALID_REFERRAL_CODE`).
+  Self-referral is structurally impossible (phone is unique, so a brand-new account can never be
+  the referring affiliate).
 
 ## 3. Commission model — 20% revenue-share on net loss (GGR)
 - **GGR (net loss)** of a referred player over a period = `Σ stakes − Σ payouts` (only positive

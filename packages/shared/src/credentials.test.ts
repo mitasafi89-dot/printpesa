@@ -51,3 +51,22 @@ test("validateFullName: bounds + charset", () => {
   assert.equal(validateFullName("J").reason, "TOO_SHORT");
   assert.equal(validateFullName("123").reason, "INVALID_CHARS");
 });
+
+import { validateReferralCode, REFERRAL_CODE_ALPHABET, REFERRAL_CODE_LENGTH } from "./credentials.js";
+
+test("validateReferralCode: normalizes (trim + upper) and accepts the canonical alphabet", () => {
+  const r = validateReferralCode("  4u7vrsca  ");
+  assert.deepEqual(r, { ok: true, code: "4U7VRSCA" });
+  // every alphabet character is accepted in a full-length code
+  const full = REFERRAL_CODE_ALPHABET.slice(0, REFERRAL_CODE_LENGTH);
+  assert.equal(validateReferralCode(full).ok, true);
+});
+
+test("validateReferralCode: rejects wrong length, ambiguous/illegal chars, and non-strings", () => {
+  assert.equal((validateReferralCode("ABC123") as { reason: string }).reason, "INVALID_LENGTH"); // 6 chars
+  assert.equal((validateReferralCode("ABCDEFGHI") as { reason: string }).reason, "INVALID_LENGTH"); // 9 chars
+  assert.equal((validateReferralCode("4U7VRSC0") as { reason: string }).reason, "INVALID_CHARS"); // 0 is excluded
+  assert.equal((validateReferralCode("4U7VRSCI") as { reason: string }).reason, "INVALID_CHARS"); // I is excluded
+  assert.equal((validateReferralCode("4U7VRS-A") as { reason: string }).reason, "INVALID_CHARS"); // hyphen
+  assert.equal((validateReferralCode(12345678 as unknown) as { reason: string }).reason, "INVALID");
+});

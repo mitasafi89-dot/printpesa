@@ -1,6 +1,6 @@
 import { randomBytes, scrypt as _scrypt, timingSafeEqual, type ScryptOptions } from "node:crypto";
 import { SignJWT } from "jose";
-import { validatePassword, validateUsername, validateFullName, validateDateOfBirth, ageInYears, MIN_AGE_YEARS, normalizeMsisdn } from "@printpesa/shared";
+import { validatePassword, validateUsername, validateFullName, validateDateOfBirth, validateReferralCode, ageInYears, MIN_AGE_YEARS, normalizeMsisdn } from "@printpesa/shared";
 import type { IdentityRepository, ProfileRow } from "./identity.js";
 
 /**
@@ -99,15 +99,26 @@ export class AuthService {
     return b.sign(this.secret);
   }
 
-  /** Register a new player: validate -> normalize phone -> hash -> atomic insert -> issue token. */
-  async register(input: { phone: string; username: string; password: string }): Promise<AuthSession> {
+  /**
+   * Register a new player: validate -> normalize phone -> hash -> atomic insert -> issue token.
+   * An optional referral code is syntactically validated here (malformed -> INVALID_REFERRAL_CODE)
+   * and passed through normalized; resolving it to an active affiliate (first-touch attribution)
+   * happens atomically inside the register RPC, where an unknown/suspended code is ignored.
+   */
+  async register(input: { phone: string; username: string; password: string; referralCode?: string }): Promise<AuthSession> {
     const pw = validatePassword(input.password);
     if (!pw.ok) throw new Error(`PASSWORD_${pw.reason}`);
     const un = validateUsername(input.username);
     if (!un.ok) throw new Error(`USERNAME_${un.reason}`);
     const phone = normalizeMsisdn(input.phone); // throws INVALID_PHONE on bad input
+    let referralCode: string | undefined;
+    if (input.referralCode !== undefined && input.referralCode !== "") {
+      const rc = validateReferralCode(input.referralCode);
+      if (!rc.ok) throw new Error("INVALID_REFERRAL_CODE");
+      referralCode = rc.code;
+    }
     const hash = await hashPassword(input.password);
-    const { userId, role } = await this.repo.register(phone, input.username, hash);
+    const { userId, role } = await this.repo.register(phone, input.username, hash, referralCode);
     const token = await this.issueToken(userId, role);
     return { token, userId, role };
   }

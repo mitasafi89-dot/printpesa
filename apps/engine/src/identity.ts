@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomInt } from "node:crypto";
+import { REFERRAL_CODE_ALPHABET, REFERRAL_CODE_LENGTH } from "@printpesa/shared";
 import type { Querier } from "./wallet.js";
 
 /**
@@ -22,15 +23,27 @@ export interface ProfileRow {
   fullName: string | null; dateOfBirth: string | null; kycStatus: string;
 }
 
+/** An affiliate (marketer) enrollment: the stable referral code + commission terms + current role. */
+export interface AffiliateView {
+  userId: string; referralCode: string; commissionRate: number; status: string; role: string;
+}
+
 export interface IdentityRepository {
-  /** Atomically create profile + wallet + credentials. Throws PHONE_TAKEN / USERNAME_TAKEN / REGISTRATION_CONFLICT. */
-  register(phone: string, username: string, passwordHash: string): Promise<RegisteredUser>;
+  /**
+   * Atomically create profile + wallet + credentials. An optional referral code (already
+   * format-validated + upper-cased by the caller) attributes the new account to an active
+   * affiliate (first-touch, permanent); an unknown/suspended code is ignored so a stale link
+   * never blocks signup. Throws PHONE_TAKEN / USERNAME_TAKEN / REGISTRATION_CONFLICT.
+   */
+  register(phone: string, username: string, passwordHash: string, referralCode?: string): Promise<RegisteredUser>;
   /** Load credential + account state by (normalized) phone, or null if no such account. */
   findByPhone(phone: string): Promise<CredentialRecord | null>;
   /** Load the full profile + KYC state by user id, or null if not found. */
   getProfile(userId: string): Promise<ProfileRow | null>;
   /** Set basic KYC (name + DOB). Throws INVALID_NAME / INVALID_DOB / AGE_RESTRICTED / DOB_IMMUTABLE / USER_NOT_FOUND. */
   setBasicProfile(userId: string, fullName: string, dateOfBirth: string): Promise<ProfileRow>;
+  /** Idempotently enroll the user as an affiliate (marketer) with a stable referral code. Throws USER_NOT_FOUND. */
+  enrollAffiliate(userId: string): Promise<AffiliateView>;
 }
 
 /** Re-raise the bare error code the RPCs raise instead of the wrapped pg message. */
@@ -50,11 +63,24 @@ function toIsoDate(v: unknown): string | null {
 /** Postgres-backed identity, calling the 0015/0016 RPCs + profile reads. */
 export class PgIdentityRepository implements IdentityRepository {
   constructor(private readonly q: Querier) {}
-  async register(phone: string, username: string, passwordHash: string): Promise<RegisteredUser> {
+  async register(phone: string, username: string, passwordHash: string, referralCode?: string): Promise<RegisteredUser> {
     try {
-      const r = await this.q.query("select user_id, role from fn_register_user($1,$2,$3)", [phone, username, passwordHash]);
+      const r = await this.q.query(
+        "select user_id, role from fn_register_user($1,$2,$3,$4)",
+        [phone, username, passwordHash, referralCode ?? null]);
       const x = r.rows[0];
       return { userId: String(x.user_id), role: String(x.role) };
+    } catch (e) { mapPgError(e); }
+  }
+  async enrollAffiliate(userId: string): Promise<AffiliateView> {
+    try {
+      const r = await this.q.query(
+        "select referral_code, commission_rate, status, role from fn_affiliate_enroll($1)", [userId]);
+      const x = r.rows[0];
+      return {
+        userId, referralCode: String(x.referral_code),
+        commissionRate: Number(x.commission_rate), status: String(x.status), role: String(x.role),
+      };
     } catch (e) { mapPgError(e); }
   }
   async findByPhone(phone: string): Promise<CredentialRecord | null> {
@@ -92,14 +118,20 @@ export class PgIdentityRepository implements IdentityRepository {
 interface MemUser {
   userId: string; phone: string; username: string; role: string; status: string;
   passwordHash: string; fullName: string | null; dateOfBirth: string | null; kycStatus: string;
+  referredBy: string | null;
 }
+
+interface MemAffiliate { userId: string; referralCode: string; commissionRate: number; status: string; }
 
 /** In-memory identity store mirroring the RPC contracts (tests + dev). */
 export class InMemoryIdentityRepository implements IdentityRepository {
   private readonly byPhone = new Map<string, MemUser>();
   private readonly byId = new Map<string, MemUser>();
   private readonly usernames = new Set<string>();
-  async register(phone: string, username: string, passwordHash: string): Promise<RegisteredUser> {
+  private readonly affiliates = new Map<string, MemAffiliate>();      // userId -> affiliate
+  private readonly byReferralCode = new Map<string, string>();         // code -> userId
+  private readonly referrals: Array<{ affiliateId: string; referredUser: string }> = [];
+  async register(phone: string, username: string, passwordHash: string, referralCode?: string): Promise<RegisteredUser> {
     if (phone.length < 8) throw new Error("INVALID_PHONE");
     if (username.length < 3) throw new Error("INVALID_USERNAME");
     if (passwordHash.length < 20) throw new Error("INVALID_HASH");
@@ -107,9 +139,18 @@ export class InMemoryIdentityRepository implements IdentityRepository {
     if (this.usernames.has(username)) throw new Error("USERNAME_TAKEN");
     const u: MemUser = {
       userId: randomUUID(), phone, username, role: "player", status: "active",
-      passwordHash, fullName: null, dateOfBirth: null, kycStatus: "none",
+      passwordHash, fullName: null, dateOfBirth: null, kycStatus: "none", referredBy: null,
     };
     this.byPhone.set(phone, u); this.byId.set(u.userId, u); this.usernames.add(username);
+    // First-touch, permanent attribution: an unknown/suspended code is silently ignored.
+    if (referralCode) {
+      const affUserId = this.byReferralCode.get(referralCode.toUpperCase());
+      const aff = affUserId ? this.affiliates.get(affUserId) : undefined;
+      if (aff && aff.status === "active" && aff.userId !== u.userId) {
+        u.referredBy = aff.userId;
+        this.referrals.push({ affiliateId: aff.userId, referredUser: u.userId });
+      }
+    }
     return { userId: u.userId, role: u.role };
   }
   async findByPhone(phone: string): Promise<CredentialRecord | null> {
@@ -129,6 +170,20 @@ export class InMemoryIdentityRepository implements IdentityRepository {
     u.kycStatus = "basic";
     return this.toProfile(u);
   }
+  async enrollAffiliate(userId: string): Promise<AffiliateView> {
+    const u = this.byId.get(userId);
+    if (!u) throw new Error("USER_NOT_FOUND");
+    let aff = this.affiliates.get(userId);
+    if (!aff) {
+      let code: string;
+      do { code = genReferralCode(); } while (this.byReferralCode.has(code));
+      aff = { userId, referralCode: code, commissionRate: 0.2, status: "active" };
+      this.affiliates.set(userId, aff);
+      this.byReferralCode.set(code, userId);
+      if (u.role === "player") u.role = "marketer"; // never downgrade a privileged role
+    }
+    return { userId, referralCode: aff.referralCode, commissionRate: aff.commissionRate, status: aff.status, role: u.role };
+  }
   private toProfile(u: MemUser): ProfileRow {
     return {
       userId: u.userId, username: u.username, role: u.role, status: u.status,
@@ -140,4 +195,19 @@ export class InMemoryIdentityRepository implements IdentityRepository {
     const u = this.byPhone.get(phone);
     if (u) u.status = status;
   }
+  /** Test seam: the affiliate a user was attributed to at signup, or null. */
+  referredByOf(userId: string): string | null {
+    return this.byId.get(userId)?.referredBy ?? null;
+  }
+  /** Test seam: how many referrals an affiliate has accrued. */
+  referralCount(affiliateId: string): number {
+    return this.referrals.filter((r) => r.affiliateId === affiliateId).length;
+  }
+}
+
+/** Generate a referral code from the canonical alphabet (in-memory mirror of the DB generator). */
+function genReferralCode(): string {
+  let s = "";
+  for (let i = 0; i < REFERRAL_CODE_LENGTH; i++) s += REFERRAL_CODE_ALPHABET.charAt(randomInt(REFERRAL_CODE_ALPHABET.length));
+  return s;
 }

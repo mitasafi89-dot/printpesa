@@ -1,12 +1,13 @@
 import { rtp, type GameConfig, type Cents } from "@printpesa/shared";
 import type {
-  FairnessRecord, ActivityRow, ChatRow, ChatPostResult, PaymentService, AuthService, Verifier,
+  FairnessRecord, ActivityRow, ChatRow, ChatPostResult, PaymentService, AuthService, AffiliateService, Verifier,
   Page, PageQuery, LedgerEntry, PositionRecord, PositionDetail, PositionListQuery, TransactionRecord, TxListQuery,
 } from "@printpesa/engine";
 import { Router, ApiError, serverFrom, type Ctx } from "./http.js";
 import { registerProtectedRoutes } from "./app.payments.js";
 import { registerHistoryRoutes } from "./app.history.js";
 import { registerAuthRoutes } from "./app.auth.js";
+import { registerAffiliateRoutes } from "./app.affiliate.js";
 import type { Server } from "node:http";
 
 /**
@@ -23,6 +24,8 @@ export interface ApiDeps {
   verifier: Verifier | null;
   /** Self-managed phone+password auth + basic-KYC profile (G3/G4/H1). */
   auth: Pick<AuthService, "register" | "login" | "me" | "completeBasicProfile">;
+  /** Marketer enrollment (I1): mint a stable referral code and promote player -> marketer. */
+  affiliate: Pick<AffiliateService, "enroll">;
   /** Public game configuration snapshot source. */
   config: GameConfig;
   /** Public fairness record for a game-day id (commitment always; seed only after reveal). */
@@ -116,6 +119,7 @@ export function createRouter(deps: ApiDeps): Router {
   const router = new Router();
   registerPublicRoutes(router, deps);
   registerAuthRoutes(router, deps);
+  registerAffiliateRoutes(router, deps);
   registerProtectedRoutes(router, deps);
   registerHistoryRoutes(router, deps);
   return router;

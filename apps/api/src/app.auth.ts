@@ -24,6 +24,7 @@ const AUTH_STATUS: Readonly<Record<string, number>> = {
   AGE_RESTRICTED: 403,
   DOB_IMMUTABLE: 409,
   INVALID_DOB: 400,
+  INVALID_REFERRAL_CODE: 400,
   USER_NOT_FOUND: 404,
   NOT_FOUND: 404,
 };
@@ -59,6 +60,14 @@ function requireString(body: Record<string, unknown>, key: string): string {
   return v;
 }
 
+/** Read an optional string field; rejects a present-but-non-string value. */
+function optionalString(body: Record<string, unknown>, key: string): string | undefined {
+  const v = body[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string") throw new ApiError("VALIDATION", `${key} must be a string`, 400);
+  return v;
+}
+
 /** Register the auth routes (register/login are public; /me requires a bearer token). */
 export function registerAuthRoutes(router: Router, deps: ApiDeps): void {
   const auth = requireAuth(deps.verifier);
@@ -68,7 +77,8 @@ export function registerAuthRoutes(router: Router, deps: ApiDeps): void {
     const phone = requireString(body, "phone");
     const username = requireString(body, "username");
     const password = requireString(body, "password");
-    const s = await domain(() => deps.auth.register({ phone, username, password }));
+    const referralCode = optionalString(body, "referral_code"); // first-touch attribution (optional)
+    const s = await domain(() => deps.auth.register({ phone, username, password, ...(referralCode !== undefined ? { referralCode } : {}) }));
     return { status: 201, body: { token: s.token, userId: s.userId, role: s.role } };
   });
 

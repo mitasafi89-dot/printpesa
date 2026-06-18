@@ -13,7 +13,7 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
 ## 1. Auth & profile
 | Method | Path | Auth | Body / notes |
 |--------|------|------|--------------|
-| POST | `/auth/register` | public | ✅ `{ phone, username, password }` → `{ token, userId, role }` (201); atomically creates profile+wallet+credentials |
+| POST | `/auth/register` | public | ✅ `{ phone, username, password, referral_code? }` → `{ token, userId, role }` (201); atomically creates profile+wallet+credentials. Optional `referral_code` attributes the account to an affiliate (first-touch & permanent; unknown/suspended code ignored, malformed → `INVALID_REFERRAL_CODE` 400) |
 | POST | `/auth/login` | public | ✅ `{ phone, password }` → `{ token, userId, role }`; generic `INVALID_CREDENTIALS`, active-status gated |
 | GET  | `/auth/me` | player | ✅ `{ userId, role, username, fullName, dateOfBirth, kycStatus, ageVerified }` |
 | PATCH| `/auth/me` | player | ✅ `{ full_name, date_of_birth }` → basic KYC (age-gate ≥18; DOB immutable once set) |
@@ -57,7 +57,7 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
 ## 5. Affiliate
 | Method | Path | Auth | Notes |
 |--------|------|------|------|
-| POST | `/affiliate/enroll` | player | become a marketer → returns referral_code |
+| POST | `/affiliate/enroll` | player | ✅ become a marketer → `{ referralCode, commissionRate, status, role, referralPath }` (200); idempotent (stable code, returns the existing row on repeat) |
 | GET  | `/affiliate/summary` | marketer | clicks, signups, active players, GGR, commission |
 | GET  | `/affiliate/referrals?cursor` | marketer | referred users + their contribution |
 | GET  | `/affiliate/commissions?period` | marketer | accrued/paid commission |
@@ -105,7 +105,7 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   `FORBIDDEN`/`ACCOUNT_SUSPENDED`/`ACCOUNT_BANNED`/`AGE_RESTRICTED`/`AGE_NOT_VERIFIED` (403),
   `NOT_FOUND`/`USER_NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405),
   `VALIDATION`/`BAD_JSON`/`INVALID_ID`/`INVALID_LIMIT`/`BAD_CALLBACK`/`INVALID_AMOUNT`/`BELOW_MIN`/
-  `INVALID_PHONE`/`INVALID_DOB`/`PASSWORD_*`/`USERNAME_*`/`NAME_*`/`DOB_*` (400),
+  `INVALID_PHONE`/`INVALID_DOB`/`INVALID_REFERRAL_CODE`/`PASSWORD_*`/`USERNAME_*`/`NAME_*`/`DOB_*` (400),
   `PHONE_TAKEN`/`USERNAME_TAKEN`/`REGISTRATION_CONFLICT`/`DOB_IMMUTABLE` (409),
   `RATE_LIMITED` (429), `REJECTED` (422), `INSUFFICIENT_FUNDS` (402), `PAYLOAD_TOO_LARGE` (413),
   `INTERNAL` (500). Daraja callbacks always ack `{ ResultCode: 0, ResultDesc: "Accepted" }`.
@@ -118,6 +118,11 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   [06 — Authentication & KYC](06-auth-kyc.md).
 - **Age gate (H1):** real-money deposit/play requires an age-verified adult (≥18), enforced at
   the money RPCs (`fn_create_deposit` / `fn_open_position`, migration 0016).
+- **Affiliate enroll + attribution (I1):** `POST /affiliate/enroll` (idempotent marketer
+  enrollment + stable referral code) and first-touch, permanent referral attribution carried
+  through `POST /auth/register` via optional `referral_code`. Both invariants live in the
+  migration-0017 RPCs (`fn_affiliate_enroll`, extended `fn_register_user`). See
+  [09 — Affiliate System](09-affiliate-system.md).
 - **Player + payments + admin (E2):** `/wallet`, `/chat` (GET/POST), `/deposits` +
   `/deposits/mpesa/callback`, `/withdrawals` + `/withdrawals/mpesa/result/:txId`,
   `/admin/withdrawals/:id/approve|reject`.
@@ -126,6 +131,7 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   `positions` ⋈ `v_fairness` / `transactions`).
 
 Not yet implemented (no backing service, or owned elsewhere): full KYC (document upload),
-`/game/ticks`, REST position open/sell, affiliate (M5), promos/bonuses, admin
+`/game/ticks`, REST position open/sell, the rest of affiliate M5 (commission accrual,
+marketer dashboard `/affiliate/summary|referrals|commissions`, payouts), promos/bonuses, admin
 user/report/config/audit endpoints. Daraja IP allow-listing is an edge/infra concern, not
 enforced in-app.

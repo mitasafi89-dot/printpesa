@@ -62,6 +62,25 @@ export function validateFullName(name: unknown): CredentialCheck {
   return { ok: true };
 }
 
+// ── Affiliate referral code ──────────────────────────────────────────────────────────────────
+// A referral code is a public, shareable handle (not a secret). It uses a Crockford-style
+// alphabet with no visually ambiguous characters (0/O, 1/I/L) so it survives being typed off a
+// poster or shared link. The authoritative generator + uniqueness live in the DB RPC; this is the
+// shared syntactic gate so the engine and HTTP layer reject malformed codes identically.
+export const REFERRAL_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+export const REFERRAL_CODE_LENGTH = 8;
+
+export type ReferralCodeCheck = { ok: true; code: string } | { ok: false; reason: string };
+
+/** Validate + normalize a referral code: trim, upper-case, exact length, allowed alphabet only. */
+export function validateReferralCode(input: unknown): ReferralCodeCheck {
+  if (typeof input !== "string") return { ok: false, reason: "INVALID" };
+  const code = input.trim().toUpperCase();
+  if (code.length !== REFERRAL_CODE_LENGTH) return { ok: false, reason: "INVALID_LENGTH" };
+  for (const ch of code) if (!REFERRAL_CODE_ALPHABET.includes(ch)) return { ok: false, reason: "INVALID_CHARS" };
+  return { ok: true, code };
+}
+
 /** Validate a strict `YYYY-MM-DD` date of birth: real past date, age within [MIN, MAX] years. */
 export function validateDateOfBirth(input: unknown, now: Date = new Date()): CredentialCheck {
   if (typeof input !== "string") return { ok: false, reason: "INVALID" };
