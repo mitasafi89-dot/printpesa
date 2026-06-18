@@ -62,8 +62,8 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
 | GET  | `/affiliate/referrals?cursor` | marketer | ✅ referred users (username, joinedAt, lifetime GGR); cursor-paginated |
 | GET  | `/affiliate/commissions?cursor` | marketer | ✅ daily commission history (period, GGR, commission, status); cursor-paginated |
 | POST | `/affiliate/payouts` | marketer | ✅ request payout of all available commission → `{ payoutId, amountCents }` (201). Reserves the covered accrued buckets (snapshot via `payout_id`); `NO_AVAILABLE_COMMISSION` (409) if nothing available, `PAYOUT_PENDING` (409) if one is already in flight |
-| POST | `/admin/affiliate/payouts/:id/approve` | finance_admin | ✅ requested → approved + dispatches M-Pesa **B2C** to the affiliate → `{ approved, conversationId? }`; idempotent (`approved:false` if not 'requested') |
-| POST | `/admin/affiliate/payouts/:id/reject` | finance_admin | ✅ requested → rejected (pre-dispatch), releases the reservation → `{ rejected }`; idempotent |
+| POST | `/admin/affiliate/payouts/:id/approve` | admin | ✅ requested → approved + dispatches M-Pesa **B2C** to the affiliate → `{ approved, conversationId? }`; idempotent (`approved:false` if not 'requested') |
+| POST | `/admin/affiliate/payouts/:id/reject` | admin | ✅ requested → rejected (pre-dispatch), releases the reservation → `{ rejected }`; idempotent |
 | POST | `/affiliate/payouts/mpesa/result/:payoutId` | public (allowlisted) | ✅ Daraja B2C result callback. `:payoutId` is in the path (the per-payout ResultURL). Success ⇒ payout `paid` + reserved buckets accrued→paid; failure ⇒ `rejected` + reservation released. Acks like the STK/withdrawal callbacks |
 
 ## 6. Engagement
@@ -102,8 +102,9 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   (`nextCursor: null` ends the list). Cursors are opaque — do not parse them.
 - Rate limits: chat 1/2s (per user, server-enforced); deposits 5/min. Register/login throttling
   is an edge concern; login is constant-time and returns a generic error (no user enumeration).
-- Roles (hierarchical, higher satisfies lower): `player` < `marketer` < `support` <
-  `finance_admin` < `super_admin`.
+- Roles (hierarchical, higher satisfies lower): `player` < `marketer` < `admin` < `superadmin`.
+  `admin` covers day-to-day operations; `superadmin` adds role management, game config, manual
+  wallet adjustments, and the audit trail. A `marketer` is also a `player`.
 - Error codes used by the implemented surface: `AUTH_REQUIRED`/`AUTH_INVALID`/`INVALID_CREDENTIALS` (401),
   `FORBIDDEN`/`ACCOUNT_SUSPENDED`/`ACCOUNT_BANNED`/`AGE_RESTRICTED`/`AGE_NOT_VERIFIED` (403),
   `NOT_FOUND`/`USER_NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405),
@@ -126,7 +127,7 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   through `POST /auth/register` via optional `referral_code`. Both invariants live in the
   migration-0017 RPCs (`fn_affiliate_enroll`, extended `fn_register_user`). See
   [09 — Affiliate System](09-affiliate-system.md).
-- **Affiliate commission accrual (I2):** `POST /admin/affiliate/accrue` (finance_admin) runs the
+- **Affiliate commission accrual (I2):** `POST /admin/affiliate/accrue` (admin) runs the
   idempotent daily 20%-of-GGR revenue-share accrual (`fn_accrue_affiliate_commissions`, migration
   0018) into `affiliate_commissions`.
 - **Marketer dashboard (I3):** `GET /affiliate/summary` (referral link, total/active referrals,
@@ -134,7 +135,7 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   `GET /affiliate/commissions` (cursor-paginated) — marketer-gated, leak-safe aggregations over
   `affiliates`/`referrals`/`affiliate_commissions`/`positions`.
 - **Affiliate payouts (I4):** `POST /affiliate/payouts` (marketer request),
-  `POST /admin/affiliate/payouts/:id/approve|reject` (finance_admin), and the public
+  `POST /admin/affiliate/payouts/:id/approve|reject` (admin), and the public
   `POST /affiliate/payouts/mpesa/result/:payoutId` B2C callback. A payout reserves the covered
   accrued commission buckets via `affiliate_commissions.payout_id` (available = accrued AND
   `payout_id IS NULL`); approve dispatches M-Pesa B2C, the result marks the payout `paid`

@@ -40,13 +40,15 @@ export type Middleware = (ctx: Ctx) => Promise<void> | void;
 
 interface Route { method: string; regex: RegExp; keys: string[]; chain: Array<Middleware | Handler>; }
 
-/** Role hierarchy — higher rank satisfies any lower minimum (see docs/05 §7). */
+/**
+ * Role hierarchy — higher rank satisfies any lower minimum (see docs/05 §7). Four tiers:
+ * player < marketer (also a player) < admin (day-to-day ops) < superadmin (full control).
+ */
 export const ROLE_RANK: Readonly<Record<string, number>> = {
   player: 1,
   marketer: 2,
-  support: 3,
-  finance_admin: 4,
-  super_admin: 5,
+  admin: 3,
+  superadmin: 4,
 };
 
 const MAX_BODY_BYTES = 1_000_000; // 1 MB cap on request bodies

@@ -164,13 +164,13 @@ export function registerProtectedRoutes(router: Router, deps: ApiDeps): void {
     return DARAJA_ACK;
   });
 
-  // ── Finance-admin: withdrawal moderation ──
-  const financeAdmin = requireRole("finance_admin");
-  router.post(`${BASE}/admin/withdrawals/:id/approve`, auth, financeAdmin, async (ctx: Ctx) => {
+  // ── Admin: withdrawal moderation ──
+  const admin = requireRole("admin");
+  router.post(`${BASE}/admin/withdrawals/:id/approve`, auth, admin, async (ctx: Ctx) => {
     return domain(() => deps.payments.approveWithdrawal(ctx.params.id!, ctx.claims!.userId));
   });
 
-  router.post(`${BASE}/admin/withdrawals/:id/reject`, auth, financeAdmin, async (ctx: Ctx) => {
+  router.post(`${BASE}/admin/withdrawals/:id/reject`, auth, admin, async (ctx: Ctx) => {
     return domain(() => deps.payments.rejectWithdrawal(ctx.params.id!, ctx.claims!.userId));
   });
 }

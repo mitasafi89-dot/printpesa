@@ -17,7 +17,7 @@ function req(api: TestApi, method: string, path: string, opts: ReqOpts = {}): Pr
 }
 
 const PLAYER = TEST_USER;                       // role defaults to "player"
-const ADMIN = `${TEST_ADMIN}:finance_admin`;
+const ADMIN = `${TEST_ADMIN}:admin`;
 
 // ─────────────────────────── wallet ───────────────────────────
 
@@ -200,10 +200,10 @@ test("withdrawal B2C result for unknown tx → 404 TX_NOT_FOUND", async () => {
   } finally { await api.close(); }
 });
 
-test("admin approve requires finance_admin (support is insufficient)", async () => {
+test("admin approve requires admin (marketer is insufficient)", async () => {
   const api = await startTestApi();
   try {
-    const res = await req(api, "POST", "/api/v1/admin/withdrawals/some-id/approve", { token: `${TEST_ADMIN}:support` });
+    const res = await req(api, "POST", "/api/v1/admin/withdrawals/some-id/approve", { token: `${TEST_ADMIN}:marketer` });
     assert.equal(res.status, 403);
     assert.equal((await json(res)).error.code, "FORBIDDEN");
   } finally { await api.close(); }

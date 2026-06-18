@@ -6,7 +6,7 @@ import { parseB2cResult } from "./app.payments.js";
 /**
  * Affiliate routes:
  *  - I1: `POST /affiliate/enroll` (marketer enrollment) + referral attribution at registration.
- *  - I2: `POST /admin/affiliate/accrue` (finance_admin) runs the daily revenue-share accrual.
+ *  - I2: `POST /admin/affiliate/accrue` (admin) runs the daily revenue-share accrual.
  *  - I3: marketer dashboard reads — `GET /affiliate/summary`, `/affiliate/referrals`,
  *    `/affiliate/commissions` (marketer-gated, cursor-paginated). Thin transport over the engine
  *    AffiliateService — invariants live in the 0017/0018 RPCs.
@@ -49,10 +49,10 @@ async function domain<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Register the affiliate routes (enrollment + dashboard require a bearer token; accrual is finance_admin). */
+/** Register the affiliate routes (enrollment + dashboard require a bearer token; accrual is admin). */
 export function registerAffiliateRoutes(router: Router, deps: ApiDeps): void {
   const auth = requireAuth(deps.verifier);
-  const financeAdmin = requireRole("finance_admin");
+  const admin = requireRole("admin");
   const marketer = requireRole("marketer");
 
   router.post(`${BASE}/affiliate/enroll`, auth, async (ctx: Ctx) => {
@@ -76,17 +76,17 @@ export function registerAffiliateRoutes(router: Router, deps: ApiDeps): void {
   router.get(`${BASE}/affiliate/commissions`, auth, marketer, async (ctx: Ctx) =>
     domain(() => deps.affiliate.listCommissions(ctx.claims!.userId, pageQuery(ctx))));
 
-  // ── Payouts (I4): marketer request → finance-admin approve/reject → M-Pesa B2C result ──
+  // ── Payouts (I4): marketer request → admin approve/reject → M-Pesa B2C result ──
   router.post(`${BASE}/affiliate/payouts`, auth, marketer, async (ctx: Ctx) =>
     domain(async () => {
       const r = await deps.affiliate.requestPayout(ctx.claims!.userId);
       return { status: 201, body: { payoutId: r.payoutId, amountCents: r.amountCents } };
     }));
 
-  router.post(`${BASE}/admin/affiliate/payouts/:id/approve`, auth, financeAdmin, async (ctx: Ctx) =>
+  router.post(`${BASE}/admin/affiliate/payouts/:id/approve`, auth, admin, async (ctx: Ctx) =>
     domain(() => deps.affiliate.approvePayout(ctx.params.id!, ctx.claims!.userId)));
 
-  router.post(`${BASE}/admin/affiliate/payouts/:id/reject`, auth, financeAdmin, async (ctx: Ctx) =>
+  router.post(`${BASE}/admin/affiliate/payouts/:id/reject`, auth, admin, async (ctx: Ctx) =>
     domain(async () => ({ rejected: await deps.affiliate.rejectPayout(ctx.params.id!, ctx.claims!.userId) })));
 
   // Public: Daraja B2C result for a payout (network-allowlisted at the edge). Always acks.
@@ -98,7 +98,7 @@ export function registerAffiliateRoutes(router: Router, deps: ApiDeps): void {
 
   // Operational: run the daily revenue-share accrual for a trading day (idempotent). In
   // production a daily cron calls this (or the RPC directly via service role).
-  router.post(`${BASE}/admin/affiliate/accrue`, auth, financeAdmin, async (ctx: Ctx) => {
+  router.post(`${BASE}/admin/affiliate/accrue`, auth, admin, async (ctx: Ctx) => {
     const body = ctx.body && typeof ctx.body === "object" ? (ctx.body as Record<string, unknown>) : {};
     const period = body.date;
     if (typeof period !== "string") throw new ApiError("VALIDATION", "date (YYYY-MM-DD) is required", 400);
