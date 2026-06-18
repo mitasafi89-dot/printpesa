@@ -22,6 +22,7 @@ Idempotent, dependency-ordered SQL migrations for the PrintPesa Supabase Postgre
 | 0007_engagement.sql | `activity_feed`, `chat_messages`, `bonuses`, `promo_codes`, `audit_log` |
 | 0008_rls_policies.sql | Enable RLS + access policies on all tables |
 | 0009_seed.sql | Seed `game_config` singleton with MVP parameters |
+| 0010_money_rpcs.sql | Atomic `fn_open_position` / `fn_settle_position` (SECURITY DEFINER, service-role only) |
 
 ## Applying
 With the Supabase/Postgres connection, apply each file in order. They are safe to re-run.
