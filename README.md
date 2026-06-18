@@ -47,6 +47,35 @@ administrative back office.
 | Auth | Phone + OTP | Email optional |
 | KYC (MVP) | Basic | Phone verified + name + DOB age-gate |
 
+---
+
+## Monorepo & Services
+
+npm workspaces (Node ≥ 20, TypeScript, ESM). Source-first: services run via `tsx` and tests
+via `node --test` — no build step required for dev.
+
+| Workspace | Package | Responsibility |
+|-----------|---------|----------------|
+| `packages/shared` | `@printpesa/shared` | Pure, deterministic core: PRNG, curve, settlement, daily seed, money/payment helpers, chat filter, config/types |
+| `packages/db` | — | SQL migrations `0001–0014`: schema, RLS, atomic money/seed/fairness/payment RPCs |
+| `apps/engine` | `@printpesa/engine` | Authoritative WebSocket game server + reusable services (game, daily-seed rotation, crash recovery, engagement, payments). Importable, side-effect-free barrel; the WS process starts via `npm -w @printpesa/engine start` |
+| `apps/api` | `@printpesa/api` | REST transport (Node `http`) binding the engine services per [docs/05](docs/05-api-reference.md): public game/fairness/activity, player wallet/chat/payments, Daraja callbacks, finance-admin withdrawal moderation |
+
+```bash
+npm install                      # install workspaces
+npx tsc -b packages/shared apps/engine apps/api   # typecheck
+node --import tsx --test packages/**/*.test.ts apps/**/*.test.ts   # run all tests
+
+npm -w @printpesa/engine start   # WS engine   (PORT, MASTER_SEED, DATABASE_URL, SUPABASE_JWT_*)
+npm -w @printpesa/api start      # REST API     (PORT=8081, DATABASE_URL, SUPABASE_JWT_*, MPESA_*)
+```
+
+Without `DATABASE_URL` the engine runs fully in-memory for local dev; the API requires
+`DATABASE_URL`. Without a configured JWT verifier both run in DEV auth mode (header-trusted —
+never for production).
+
+---
+
 > **Disclaimer:** PrintPesa is a real-money gambling product. Operation requires a valid gaming
 > licence and adherence to KYC/AML, responsible-gaming, tax (excise/withholding) and advertising
 > rules in every jurisdiction served. See [Security & Compliance](docs/14-security-compliance.md).
