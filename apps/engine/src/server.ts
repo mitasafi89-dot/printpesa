@@ -1,17 +1,17 @@
-import { createHash } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
-import { CurveGenerator, SettlementEngine, DEFAULT_CONFIG, type Direction } from "@printpesa/shared";
+import { DEFAULT_CONFIG, type Direction } from "@printpesa/shared";
 import { InMemoryGameRepository, PgGameRepository, type GameRepository } from "./wallet.js";
 import { GameServer } from "./game.js";
+import { SeedManager } from "./daycontext.js";
+import { RecoveryService } from "./recovery.js";
 import { makeVerifier } from "./auth.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
-const SERVER_SEED = process.env.SERVER_SEED ?? "dev-daily-seed-0001";
-const serverSeedHash = createHash("sha256").update(SERVER_SEED).digest("hex");
+// One long-lived master seed; per-day seeds are derived as HMAC(MASTER_SEED, dateKey).
+// SERVER_SEED kept as a fallback name for dev parity.
+const MASTER_SEED = process.env.MASTER_SEED ?? process.env.SERVER_SEED ?? "dev-master-seed-0001";
 
 const cfg = DEFAULT_CONFIG;
-const curve = new CurveGenerator(SERVER_SEED, cfg);
-const settlement = new SettlementEngine(curve, cfg);
 
 // Persistence: Postgres in production (atomic RPCs), in-memory for local dev.
 let repo: GameRepository;
@@ -27,9 +27,16 @@ if (usingDb) {
 const verifier = makeVerifier();
 if (usingDb && !verifier) throw new Error("AUTH: a JWT verifier is required when DATABASE_URL is set (set SUPABASE_JWT_SECRET or SUPABASE_JWKS_URL)");
 
-const now = new Date();
-const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-const game = new GameServer(curve, settlement, repo, cfg, dayStart);
+// Daily seed lifecycle: derive + commit today's seed, expose it synchronously to the engine.
+const seeds = new SeedManager(MASTER_SEED, cfg, repo);
+await seeds.init();
+
+const game = new GameServer(() => seeds.getActive(), repo, cfg);
+
+// Crash recovery: replay any positions the DB still considers open before we accept traffic.
+const recovery = new RecoveryService(repo, seeds, game);
+const recovered = await recovery.recover();
+console.log(`[engine] recovery: scanned=${recovered.scanned} settled=${recovered.settled} rearmed=${recovered.rearmed} noop=${recovered.noop} failed=${recovered.failed}`);
 
 const all = new Set<WebSocket>();
 const byUser = new Map<string, Set<WebSocket>>();
@@ -50,10 +57,25 @@ game.subscribe({
 });
 game.start();
 
+// Rotate at the UTC day boundary: derive the new day, commit its hash, reveal yesterday's seed.
+const ROTATE_CHECK_MS = 60_000;
+setInterval(() => {
+  void (async () => {
+    try {
+      const before = seeds.getActive().dateKey;
+      const { active, revealed } = await seeds.rotate();
+      if (active.dateKey !== before) {
+        broadcast("fairness", { serverSeedHash: active.seedHash, tradeDate: active.dateKey });
+        console.log(`[engine] rotated to ${active.dateKey}${revealed ? ` (revealed ${revealed})` : ""}`);
+      }
+    } catch (err) { console.error("[engine] rotation:", (err as Error).message); }
+  })();
+}, ROTATE_CHECK_MS).unref();
+
 const wss = new WebSocketServer({ port: PORT });
 wss.on("connection", (ws) => {
   all.add(ws);
-  send(ws, "hello", { serverTime: Date.now(), serverSeedHash, gameConfig: game.onlineConfigSnapshot() });
+  send(ws, "hello", { serverTime: Date.now(), serverSeedHash: seeds.getActive().seedHash, tradeDate: seeds.getActive().dateKey, gameConfig: game.onlineConfigSnapshot() });
   broadcast("online", { count: all.size });
 
   ws.on("message", async (raw) => {
@@ -95,4 +117,4 @@ wss.on("connection", (ws) => {
 });
 
 if (!verifier) console.warn("[engine] WARNING: no JWT verifier configured — DEV auth (trusts client userId). Do NOT use in production.");
-console.log(`[engine] listening on ws://localhost:${PORT}  store=${usingDb ? "postgres" : "in-memory"}  auth=${verifier ? "jwt" : "dev"}  seedHash=${serverSeedHash.slice(0, 12)}…  edge=${(cfg.houseEdge * 100).toFixed(0)}%`);
+console.log(`[engine] listening on ws://localhost:${PORT}  store=${usingDb ? "postgres" : "in-memory"}  auth=${verifier ? "jwt" : "dev"}  day=${seeds.getActive().dateKey}  seedHash=${seeds.getActive().seedHash.slice(0, 12)}…  edge=${(cfg.houseEdge * 100).toFixed(0)}%`);

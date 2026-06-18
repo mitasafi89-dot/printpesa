@@ -9,10 +9,26 @@ export interface Position {
   outcome: Outcome;                       // committed at open; kept server-side only (never persisted pre-settle)
   status: "open" | "settled";
   sellable: boolean;
+  gameDayId: number | null;               // the day whose seed determined this outcome
 }
 export interface SettledEvent { position: Position; lockedMultiplier: number; payoutCents: number; pnlCents: number; balance: number; mode: "auto" | "manual"; }
 export interface UpdateEvent { positionId: string; liveMultiplier: number; livePnlCents: number; secondsLeft: number; sellable: boolean; }
 type Listener = { onTick?: (t: Tick) => void; onUpdate?: (u: UpdateEvent) => void; onSettled?: (e: SettledEvent) => void; onError?: (err: Error, ctx: string) => void; };
+
+/**
+ * The active trading day, supplied to the GameServer on every tick/open. Decoupling the
+ * server from a fixed (curve, settlement, dayStart) lets the SeedManager rotate the day
+ * at the UTC boundary without rebuilding the server, and lets recovery re-arm positions
+ * from prior days. `settlement.liveWinMultiplier` is day-agnostic, so re-armed positions
+ * from an earlier day still render and settle correctly against the active settlement.
+ */
+export interface ActiveContext {
+  curve: CurveGenerator;
+  settlement: SettlementEngine;
+  dayStartMs: number;
+  gameDayId: number | null;
+}
+export type ActiveContextProvider = () => ActiveContext;
 
 let nonceCounter = 0;
 
@@ -20,15 +36,13 @@ export class GameServer {
   private positions = new Map<string, Position>();
   private listeners = new Set<Listener>();
   private lastRate?: number;
-  private tickTimer?: NodeJS.Timeout;
+  private tickTimer: NodeJS.Timeout | undefined;
   private stepping = false;
 
   constructor(
-    private readonly curve: CurveGenerator,
-    private readonly settlement: SettlementEngine,
+    private readonly getActiveContext: ActiveContextProvider,
     private readonly repo: GameRepository,
     private readonly cfg: GameConfig,
-    private readonly dayStartMs: number,
     private readonly now: () => number = () => Date.now(),
   ) {}
 
@@ -45,8 +59,9 @@ export class GameServer {
     if (this.stepping) return;
     this.stepping = true;
     try {
+      const ctx = this.getActiveContext();
       const nowMs = this.now();
-      const tick = this.curve.tick(nowMs, this.dayStartMs, this.lastRate);
+      const tick = ctx.curve.tick(nowMs, ctx.dayStartMs, this.lastRate);
       this.lastRate = tick.rate;
       this.emitTick(tick);
       const expired: Position[] = [];
@@ -54,15 +69,15 @@ export class GameServer {
         if (p.status !== "open") continue;
         if (nowMs >= p.expiresAtMs) { expired.push(p); continue; }
         const g = (nowMs - p.openedAtMs) / (p.durationS * 1000);
-        const live = this.liveMultiplier(p, g);
+        const live = this.liveMultiplier(p, g, ctx.settlement);
         this.emitUpdate({ positionId: p.id, liveMultiplier: live, livePnlCents: Math.round(p.stakeCents * live) - p.stakeCents, secondsLeft: Math.max(0, (p.expiresAtMs - nowMs) / 1000), sellable: p.sellable });
       }
       for (const p of expired) { try { await this.settleAuto(p); } catch (err) { this.emitError(err as Error, `auto-settle ${p.id}`); } }
     } finally { this.stepping = false; }
   }
 
-  private liveMultiplier(p: Position, g: number): number {
-    if (p.outcome.result === "win") return this.settlement.liveWinMultiplier(p.outcome.multiplier, g);
+  private liveMultiplier(p: Position, g: number, settlement: SettlementEngine): number {
+    if (p.outcome.result === "win") return settlement.liveWinMultiplier(p.outcome.multiplier, g);
     const x = Math.min(1, Math.max(0, g));
     return 1 - x * x * x * (x * (x * 6 - 15) + 10);
   }
@@ -74,17 +89,31 @@ export class GameServer {
     if (input.stakeCents < this.cfg.minStakeCents) throw new Error(`STAKE_BELOW_MIN: min ${this.cfg.minStakeCents}`);
     if (input.stakeCents > this.cfg.maxStakeCents) throw new Error(`STAKE_ABOVE_MAX: max ${this.cfg.maxStakeCents}`);
     if (durationS <= 0) throw new RangeError("duration must be > 0");
+    const ctx = this.getActiveContext();
     const openedAtMs = this.now();
-    const entryT = (openedAtMs - this.dayStartMs) / 1000;
-    const outcome = this.settlement.settle(input.stakeCents, input.direction, entryT);
+    const entryT = (openedAtMs - ctx.dayStartMs) / 1000;
+    const outcome = ctx.settlement.settle(input.stakeCents, input.direction, entryT);
     const nonce = (nonceCounter = (nonceCounter + 1) % Number.MAX_SAFE_INTEGER);
     const { positionId, newBalance } = await this.repo.openPosition({
       userId: input.userId, stakeCents: input.stakeCents, direction: input.direction,
-      entryRate: outcome.entryRate, durationS, gameDayId: null, nonce,
+      entryRate: outcome.entryRate, durationS, gameDayId: ctx.gameDayId, nonce, openedAtMs,
     });
-    const p: Position = { id: positionId, userId: input.userId, stakeCents: input.stakeCents, direction: input.direction, durationS, openedAtMs, expiresAtMs: openedAtMs + durationS * 1000, entryT, outcome, status: "open", sellable: outcome.result === "win" };
+    const p: Position = { id: positionId, userId: input.userId, stakeCents: input.stakeCents, direction: input.direction, durationS, openedAtMs, expiresAtMs: openedAtMs + durationS * 1000, entryT, outcome, status: "open", sellable: outcome.result === "win", gameDayId: ctx.gameDayId };
     this.positions.set(positionId, p);
     return { position: p, balance: newBalance };
+  }
+
+  /**
+   * Re-arm an in-flight position recovered from the database after a restart. The caller
+   * (RecoveryService) has already recomputed its committed outcome from the day seed, so
+   * the position resumes its normal lifecycle: live updates until expiry, then auto-settle.
+   * Idempotent and safe — never re-arms an already-tracked or non-open position.
+   */
+  rearm(p: Position): boolean {
+    if (p.status !== "open") return false;
+    if (this.positions.has(p.id)) return false;
+    this.positions.set(p.id, p);
+    return true;
   }
 
   async sell(positionId: string, userId: string): Promise<SettledEvent> {
@@ -93,7 +122,7 @@ export class GameServer {
     if (p.status !== "open") throw new Error("ALREADY_SETTLED");
     if (!p.sellable) throw new Error("NOT_SELLABLE: losing positions settle at expiry");
     const g = (this.now() - p.openedAtMs) / (p.durationS * 1000);
-    return this.finalize(p, this.settlement.liveWinMultiplier(p.outcome.multiplier, g), "manual");
+    return this.finalize(p, this.getActiveContext().settlement.liveWinMultiplier(p.outcome.multiplier, g), "manual");
   }
 
   private async settleAuto(p: Position): Promise<SettledEvent> {
@@ -115,5 +144,6 @@ export class GameServer {
   }
 
   getPosition(id: string): Position | undefined { return this.positions.get(id); }
+  openCount(): number { let n = 0; for (const p of this.positions.values()) if (p.status === "open") n++; return n; }
   onlineConfigSnapshot() { return { minStakeCents: this.cfg.minStakeCents, maxMultiplier: this.cfg.maxMultiplier, defaultDurationS: this.cfg.defaultDurationS, tickRateMs: this.cfg.tickRateMs }; }
 }
