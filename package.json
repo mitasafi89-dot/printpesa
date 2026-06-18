@@ -1,0 +1,19 @@
+{
+  "name": "printpesa",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PrintPesa — authoritative real-money trade-prediction game engine (monorepo)",
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test \"packages/**/*.test.ts\" \"apps/**/*.test.ts\"",
+    "engine": "tsx apps/engine/src/server.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
