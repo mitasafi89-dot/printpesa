@@ -13,11 +13,9 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
 ## 1. Auth & profile
 | Method | Path | Auth | Body / notes |
 |--------|------|------|--------------|
-| POST | `/auth/request-otp` | public | `{ phone }` → sends SMS OTP |
-| POST | `/auth/verify-otp` | public | `{ phone, code, referral_code? }` → session + creates profile/wallet |
-| POST | `/auth/refresh` | public | `{ refresh_token }` |
-| POST | `/auth/logout` | player | invalidates session |
-| GET  | `/me` | player | profile + wallet + kyc_status |
+| POST | `/auth/register` | public | ✅ `{ phone, username, password }` → `{ token, userId, role }` (201); atomically creates profile+wallet+credentials |
+| POST | `/auth/login` | public | ✅ `{ phone, password }` → `{ token, userId, role }`; generic `INVALID_CREDENTIALS`, active-status gated |
+| GET  | `/auth/me` | player | ✅ `{ userId, role, username }` derived from the verified token |
 | PATCH| `/me` | player | `{ full_name, date_of_birth }` (basic KYC, age-gate ≥18) |
 
 ## 2. Wallet & history
@@ -94,18 +92,22 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
 - Pagination: cursor-based (`?cursor=&limit=`, max 100, default 30). List responses are
   `{ items, nextCursor }`, newest-first; pass `nextCursor` back as `cursor` for the next page
   (`nextCursor: null` ends the list). Cursors are opaque — do not parse them.
-- Rate limits: OTP 1/30s & 5/hr/phone; chat 1/2s (per user, server-enforced); deposits 5/min.
+- Rate limits: chat 1/2s (per user, server-enforced); deposits 5/min. Register/login throttling
+  is an edge concern; login is constant-time and returns a generic error (no user enumeration).
 - Roles (hierarchical, higher satisfies lower): `player` < `marketer` < `support` <
   `finance_admin` < `super_admin`.
-- Error codes used by the implemented surface: `AUTH_REQUIRED`/`AUTH_INVALID` (401),
-  `FORBIDDEN` (403), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405), `VALIDATION`/`BAD_JSON`/
-  `INVALID_ID`/`INVALID_LIMIT`/`BAD_CALLBACK`/`INVALID_AMOUNT`/`BELOW_MIN`/`INVALID_PHONE` (400),
+- Error codes used by the implemented surface: `AUTH_REQUIRED`/`AUTH_INVALID`/`INVALID_CREDENTIALS` (401),
+  `FORBIDDEN`/`ACCOUNT_SUSPENDED`/`ACCOUNT_BANNED` (403), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405),
+  `VALIDATION`/`BAD_JSON`/`INVALID_ID`/`INVALID_LIMIT`/`BAD_CALLBACK`/`INVALID_AMOUNT`/`BELOW_MIN`/
+  `INVALID_PHONE`/`PASSWORD_*`/`USERNAME_*` (400), `PHONE_TAKEN`/`USERNAME_TAKEN`/`REGISTRATION_CONFLICT` (409),
   `RATE_LIMITED` (429), `REJECTED` (422), `INSUFFICIENT_FUNDS` (402), `PAYLOAD_TOO_LARGE` (413),
   `INTERNAL` (500). Daraja callbacks always ack `{ ResultCode: 0, ResultDesc: "Accepted" }`.
 
 ## 9. Implementation status
 `apps/api` (Node `http`, default `PORT=8081`) currently ships:
 - **Public (E1):** `/health`, `/game/config`, `/game/fairness/:gameDayId`, `/activity`.
+- **Auth (G):** `/auth/register`, `/auth/login` (self-managed phone+password, no OTP; scrypt +
+  self-issued HS256 JWT) and `/auth/me`. See [06 — Authentication & KYC](06-auth-kyc.md).
 - **Player + payments + admin (E2):** `/wallet`, `/chat` (GET/POST), `/deposits` +
   `/deposits/mpesa/callback`, `/withdrawals` + `/withdrawals/mpesa/result/:txId`,
   `/admin/withdrawals/:id/approve|reject`.
@@ -113,7 +115,7 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   (cursor-paginated, per-user isolated, backed by keyset reads over `ledger_entries` /
   `positions` ⋈ `v_fairness` / `transactions`).
 
-Not yet implemented (no backing service, or owned elsewhere): OTP auth + `/me` (Supabase),
+Not yet implemented (no backing service, or owned elsewhere): `PATCH /me` basic-KYC/age-gate,
 `/game/ticks`, REST position open/sell, affiliate (M5), promos/bonuses, admin
 user/report/config/audit endpoints. Daraja IP allow-listing is an edge/infra concern, not
 enforced in-app.
