@@ -26,6 +26,7 @@ Idempotent, dependency-ordered SQL migrations for the PrintPesa Supabase Postgre
 | 0011_fairness.sql | Daily seed rotation: `v_fairness` view (read-only), `fn_ensure_game_day`, `fn_reveal_game_day` (commitment-checked, past-only) |
 | 0012_open_with_opened_at.sql | `fn_open_position` accepts engine-authoritative `opened_at` (deterministic recovery) |
 | 0013_seed_engagement.sql | Seed ≥500 simulated `activity_feed` + ≥500 `chat_messages` (deterministic, idempotent; `is_simulated=true` / `user_id IS NULL`) |
+| 0014_payment_rpcs.sql | Atomic + idempotent M-Pesa RPCs: deposit (`fn_create_deposit`/`fn_attach_stk`/`fn_complete_deposit`) and withdrawal (`fn_create_withdrawal` hold, `fn_approve_withdrawal`, `fn_reject_withdrawal`, `fn_complete_withdrawal` with reversal) — service-role only |
 
 ## Applying
 With the Supabase/Postgres connection, apply each file in order. They are safe to re-run.
