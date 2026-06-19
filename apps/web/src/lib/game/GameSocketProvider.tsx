@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatKes } from '@printpesa/shared/money';
+import { CURVE_AMPLITUDE, CURVE_BASE_RATE } from '@printpesa/shared/config';
 import { env } from '@/lib/env';
 import { useSession } from '@/lib/auth/session';
 import { useToast } from '@/lib/toast/ToastProvider';
@@ -70,6 +71,19 @@ interface GameSocketValue {
 
 const Ctx = createContext<GameSocketValue | null>(null);
 
+const SYNTH_SPACING_MS = 150;
+const SYNTH_SPAN_MS = 60_000;
+
+/** Smooth, lively synthetic curve value ∈ (-0.88, 0.88) to keep the canvas full pre-data. */
+function synthValue(t: number): number {
+  const s = t / 1000;
+  const v =
+    0.45 * Math.sin(s * 1.7) +
+    0.28 * Math.sin(s * 0.9 + 1.3) +
+    0.18 * Math.sin(s * 3.1 + 0.5);
+  return Math.max(-0.88, Math.min(0.88, v));
+}
+
 function isTick(v: unknown): v is Tick {
   return (
     typeof v === 'object' && v !== null &&
@@ -107,6 +121,7 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
   const clientSeq = useRef(0);
+  const realSeenRef = useRef(false);
 
   const [status, setStatus] = useState<ConnStatus>('connecting');
   const [online, setOnline] = useState(0);
@@ -222,6 +237,38 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
     [send, toast],
   );
 
+  // Pre-fill the tick buffer with a smooth synthetic history so the curve is
+  // already full on load (never "fills in" from the right). Keeps emitting until
+  // the first real tick arrives, then stands down so live data takes over.
+  useEffect(() => {
+    if (ticksRef.current.length === 0) {
+      const now = Date.now();
+      const count = Math.floor(SYNTH_SPAN_MS / SYNTH_SPACING_MS);
+      const seed: Tick[] = [];
+      let prev = CURVE_BASE_RATE;
+      for (let i = count; i > 0; i--) {
+        const t = now - i * SYNTH_SPACING_MS;
+        const rate = CURVE_BASE_RATE + CURVE_AMPLITUDE * synthValue(t);
+        seed.push({ t, rate, delta: rate - prev });
+        prev = rate;
+      }
+      ticksRef.current = seed;
+    }
+    const id = setInterval(() => {
+      if (realSeenRef.current) {
+        clearInterval(id);
+        return;
+      }
+      const buf = ticksRef.current;
+      const t = Date.now();
+      const prev = buf.length > 0 ? buf[buf.length - 1]!.rate : CURVE_BASE_RATE;
+      const rate = CURVE_BASE_RATE + CURVE_AMPLITUDE * synthValue(t);
+      buf.push({ t, rate, delta: rate - prev });
+      if (buf.length > MAX_TICKS) buf.splice(0, buf.length - MAX_TICKS);
+    }, SYNTH_SPACING_MS);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     closedRef.current = false;
 
@@ -247,12 +294,19 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
           break;
         }
         case 'tick': {
-          if (isTick(data)) pushTick(data);
+          if (isTick(data)) {
+            realSeenRef.current = true;
+            pushTick(data);
+          }
           break;
         }
         case 'tick_batch': {
           const items = (data as { ticks?: unknown[] })?.ticks ?? [];
-          for (const it of items) if (isTick(it)) pushTick(it);
+          for (const it of items)
+            if (isTick(it)) {
+              realSeenRef.current = true;
+              pushTick(it);
+            }
           break;
         }
         case 'online': {

@@ -52,7 +52,7 @@ body {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
 }
-.animate-marquee { animation: pp-marquee 28s linear infinite; }
+.animate-marquee { animation: pp-marquee 26s linear infinite reverse; }
 @media (prefers-reduced-motion: reduce) {
   .animate-marquee { animation: none; }
 }

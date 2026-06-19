@@ -48,8 +48,8 @@ export function BetPanel() {
 
   // Seed the stake field with the minimum once config arrives.
   useEffect(() => {
-    if (config && stake === '') setStake(String(centsToKes(minStakeCents)));
-  }, [config, minStakeCents, stake]);
+    if (stake === '') setStake(String(centsToKes(minStakeCents)));
+  }, [minStakeCents, stake]);
   useEffect(() => {
     if (config) setDurationS((d) => (d === 10 && defaultDurationS !== 10 ? defaultDurationS : d));
   }, [config, defaultDurationS]);
@@ -111,7 +111,7 @@ export function BetPanel() {
   }
 
   // ── Loading ───────────────────────────────────────────────────────────────
-  if (!hydrated || !config) {
+  if (!hydrated) {
     return (
       <Card className="flex flex-col gap-3 p-3">
         <Skeleton className="h-12 w-full" />

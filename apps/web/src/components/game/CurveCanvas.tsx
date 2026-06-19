@@ -34,6 +34,9 @@ function hexA(hex: string, a: number): string {
 
 type Pt = [number, number];
 
+// Catmull-Rom control-point tension. Smaller = tighter/sharper peaks (was 1/6).
+const SMOOTH = 0.085;
+
 function smoothPath(ctx: CanvasRenderingContext2D, p: Pt[]): void {
   const first = p[0];
   if (!first) return;
@@ -44,18 +47,20 @@ function smoothPath(ctx: CanvasRenderingContext2D, p: Pt[]): void {
     if (!p1 || !p2) continue;
     const p0 = p[i - 1] ?? p1;
     const p3 = p[i + 2] ?? p2;
-    const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
-    const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
-    const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
-    const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+    const cp1x = p1[0] + (p2[0] - p0[0]) * SMOOTH;
+    const cp1y = p1[1] + (p2[1] - p0[1]) * SMOOTH;
+    const cp2x = p2[0] - (p3[0] - p1[0]) * SMOOTH;
+    const cp2y = p2[1] - (p3[1] - p1[1]) * SMOOTH;
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2[0], p2[1]);
   }
 }
 
 // Signed display value ∈ (-1, 1): the curve's tanh signal recovered from `rate`.
 const toValue = (rate: number) => (rate - CURVE_BASE_RATE) / CURVE_AMPLITUDE;
-// Fixed symmetric vertical scale (value is tanh-bounded to ±1; small headroom for glow).
-const Y_MAX = 1.08;
+// Tight symmetric vertical scale so waves fill the canvas (taller); ±1 spikes clip a touch.
+const Y_MAX = 0.9;
+// y-axis calibration lines/labels at 0.2 intervals.
+const AXIS_TICKS = [-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8];
 
 export function CurveCanvas({
   getTicks,
@@ -114,30 +119,30 @@ export function CurveCanvas({
       return { Y, y0: PAD_Y + usableH * 0.5 };
     };
 
-    // y-axis labels (+1.0 / 0.0 / -1.0) and the prominent 0-axis line.
-    const drawAxis = (y0: number, Y: (v: number) => number) => {
-      ctx.strokeStyle = hexA(colors.axis, 0.45);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, y0);
-      ctx.lineTo(cssW, y0);
-      ctx.stroke();
-
-      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+    // y-axis calibration grid (0.2 steps) + labels; the 0-axis is emphasised.
+    const drawAxis = (Y: (v: number) => number) => {
+      ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = hexA(colors.muted, 0.6);
-      ctx.fillText('1.0', 6, Y(1));
-      ctx.fillText('-1.0', 6, Y(-1));
-      ctx.fillStyle = hexA(colors.muted, 0.95);
-      ctx.fillText('0.0', 6, y0);
+      for (const v of AXIS_TICKS) {
+        const y = Y(v);
+        const zero = v === 0;
+        ctx.strokeStyle = hexA(colors.axis, zero ? 0.5 : 0.13);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(cssW, y);
+        ctx.stroke();
+        ctx.fillStyle = hexA(colors.muted, zero ? 0.95 : 0.55);
+        ctx.fillText(v.toFixed(1), 6, y);
+      }
     };
 
     const drawEmpty = () => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
       const { Y, y0 } = geom();
-      drawAxis(y0, Y);
+      drawAxis(Y);
       ctx.fillStyle = colors.muted;
       ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -188,6 +193,9 @@ export function CurveCanvas({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
 
+      // Calibration grid behind the curve.
+      drawAxis(Y);
+
       // Closed area between the curve and the 0-axis (filled twice, clipped per side).
       const buildArea = () => {
         ctx.beginPath();
@@ -204,7 +212,7 @@ export function CurveCanvas({
       ctx.clip();
       buildArea();
       const gUp = ctx.createLinearGradient(0, PAD_Y, 0, y0);
-      gUp.addColorStop(0, hexA(colors.up, 0.32));
+      gUp.addColorStop(0, hexA(colors.up, 0.34));
       gUp.addColorStop(1, hexA(colors.up, 0));
       ctx.fillStyle = gUp;
       ctx.fill();
@@ -228,7 +236,7 @@ export function CurveCanvas({
       buildArea();
       const gDn = ctx.createLinearGradient(0, y0, 0, cssH - PAD_Y);
       gDn.addColorStop(0, hexA(colors.down, 0));
-      gDn.addColorStop(1, hexA(colors.down, 0.32));
+      gDn.addColorStop(1, hexA(colors.down, 0.34));
       ctx.fillStyle = gDn;
       ctx.fill();
       ctx.beginPath();
@@ -243,8 +251,8 @@ export function CurveCanvas({
       ctx.shadowBlur = 0;
       ctx.restore();
 
-      // 0-axis + labels on top.
-      drawAxis(y0, Y);
+      // 0-axis + labels on top of the fill.
+      drawAxis(Y);
 
       // Live dot, coloured by the current side.
       const lastV = toValue(last2.rate);

@@ -1,3 +1,4 @@
+
 'use client';
 
 import Link from 'next/link';
@@ -58,9 +59,12 @@ export function BottomNav() {
             <li key={href} className="flex-1">
               <Link
                 href={href}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
                   'mx-auto flex flex-col items-center justify-center gap-1 rounded-xl py-1.5 text-[10px] font-semibold tracking-wide transition',
-                  active ? 'bg-accent/10 text-accent' : 'text-muted hover:text-fg',
+                  active
+                    ? 'bg-accent text-accent-fg shadow-md shadow-accent/40'
+                    : 'text-muted hover:text-fg',
                 )}
               >
                 <Icon className="h-5 w-5" />
