@@ -1,4 +1,4 @@
-import type { Cents, Direction, PositionStatus, PositionResult } from '@printpesa/shared';
+import type { ActivityKind, Cents, Direction, PositionStatus, PositionResult } from '@printpesa/shared';
 
 /** Cursor-paginated list envelope (docs/05 §8). */
 export interface Paginated<T> {
@@ -26,6 +26,15 @@ export interface WalletDto {
   real: Cents;
   bonus: Cents;
   currency: string;
+}
+
+/** GET /activity item (newest-first). Mirrors the WS `activity` DTO. */
+export interface ActivityDto {
+  kind: ActivityKind;
+  username: string;
+  amountCents: Cents | null;
+  message: string;
+  ts: number;
 }
 
 /** Wire shape of GET /game/config (docs/05 §4). */

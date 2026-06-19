@@ -1,6 +1,7 @@
 import { GameSocketProvider } from '@/lib/game/GameSocketProvider';
 import { GameCurve } from '@/components/game/GameCurve';
 import { BetPanel } from '@/components/game/BetPanel';
+import { EngagementPanel } from '@/components/engagement/EngagementPanel';
 
 export default function GamePage() {
   return (
@@ -11,6 +12,8 @@ export default function GamePage() {
         <div className="fixed inset-x-0 bottom-14 z-20 mx-auto w-full max-w-app px-4 md:static md:bottom-auto md:px-0">
           <BetPanel />
         </div>
+        {/* Social & engagement (FE5): live activity feed + moderated chat. */}
+        <EngagementPanel />
       </section>
     </GameSocketProvider>
   );

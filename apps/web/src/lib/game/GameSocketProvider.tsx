@@ -31,8 +31,18 @@ import type {
   PositionUpdateData,
   WsErrorData,
 } from '@/lib/game/betting';
+import {
+  isActivityItem,
+  isChatErrorCode,
+  isChatMessageItem,
+  type ActivityItem,
+  type ChatError,
+  type ChatMessageItem,
+} from '@/lib/game/engagement';
 
 const MAX_TICKS = 3000;
+const MAX_ACTIVITY = 50;
+const MAX_CHAT = 100;
 
 interface GameSocketValue {
   status: ConnStatus;
@@ -46,6 +56,16 @@ interface GameSocketValue {
   openPosition: (input: OpenPositionInput) => void;
   /** Manually cash out the open position (only valid while `sellable`). */
   sell: () => void;
+  /** Live activity feed, newest-first (capped at {@link MAX_ACTIVITY}). */
+  activity: ActivityItem[];
+  /** Chat messages in chronological order, oldest-first (capped at {@link MAX_CHAT}). */
+  chat: ChatMessageItem[];
+  /** Latest inline chat rejection (rate-limit / sanitizer), or null. */
+  chatError: ChatError | null;
+  /** Request a fresh chat backfill (`subscribe_chat` → `chat_batch`). */
+  subscribeChat: () => void;
+  /** Post a chat message (`send_chat`); the server echoes it back via `chat`. */
+  sendChat: (message: string) => boolean;
 }
 
 const Ctx = createContext<GameSocketValue | null>(null);
@@ -93,6 +113,10 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
   const [fairness, setFairness] = useState<FairnessData | null>(null);
   const [activePosition, setActivePosition] = useState<ActivePosition | null>(null);
   const activeRef = useRef<ActivePosition | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [chat, setChat] = useState<ChatMessageItem[]>([]);
+  const [chatError, setChatError] = useState<ChatError | null>(null);
+  const chatErrSeq = useRef(0);
 
   /** Keep ref + state in lockstep so socket handlers can read the current value. */
   const setActive = useCallback(
@@ -172,6 +196,31 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
     }
     setActive({ ...a, phase: 'settling' });
   }, [send, setActive, toast]);
+
+  const subscribeChat = useCallback(() => {
+    send('subscribe_chat', {});
+  }, [send]);
+
+  const sendChat = useCallback(
+    (message: string): boolean => {
+      const text = message.trim();
+      if (!text) return false;
+      if (!tokenRef.current) {
+        toast.push({ tone: 'error', title: 'Log in to chat' });
+        return false;
+      }
+      if (!send('send_chat', { message: text })) {
+        toast.push({
+          tone: 'error',
+          title: 'Not connected',
+          description: 'Reconnecting — try again shortly.',
+        });
+        return false;
+      }
+      return true;
+    },
+    [send, toast],
+  );
 
   useEffect(() => {
     closedRef.current = false;
@@ -276,8 +325,45 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
           });
           break;
         }
+        case 'activity': {
+          if (isActivityItem(data)) {
+            const item = data;
+            setActivity((cur) => [item, ...cur].slice(0, MAX_ACTIVITY));
+          }
+          break;
+        }
+        case 'activity_batch': {
+          const items = (data as { items?: unknown[] })?.items ?? [];
+          const valid = items.filter(isActivityItem);
+          // Batch arrives oldest-first; present newest-first.
+          setActivity(valid.reverse().slice(0, MAX_ACTIVITY));
+          break;
+        }
+        case 'chat': {
+          if (isChatMessageItem(data)) {
+            const item = data;
+            setChat((cur) => {
+              if (cur.some((m) => m.id === item.id)) return cur;
+              const next = [...cur, item];
+              return next.length > MAX_CHAT ? next.slice(next.length - MAX_CHAT) : next;
+            });
+          }
+          break;
+        }
+        case 'chat_batch': {
+          const items = (data as { items?: unknown[] })?.items ?? [];
+          const valid = items.filter(isChatMessageItem);
+          // Batch arrives oldest-first; keep chronological for bottom-anchored chat.
+          setChat(valid.slice(-MAX_CHAT));
+          break;
+        }
         case 'error': {
           const d = data as WsErrorData;
+          // Chat rejections (rate-limit / sanitizer) surface inline, never as a trade toast.
+          if (isChatErrorCode(d.code)) {
+            setChatError({ code: d.code, reasons: d.reasons ?? [], nonce: ++chatErrSeq.current });
+            break;
+          }
           const a = activeRef.current;
           if (a && !a.positionId) {
             // optimistic open never acked → roll back and re-sync balance
@@ -295,7 +381,7 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
           break;
         }
         default:
-          break; // chat / activity handled in FE5
+          break; // pong / unknown frames are ignored
       }
     };
 
@@ -378,7 +464,21 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
 
   return (
     <Ctx.Provider
-      value={{ status, online, fairness, getTicks, getLastTick, activePosition, openPosition, sell }}
+      value={{
+        status,
+        online,
+        fairness,
+        getTicks,
+        getLastTick,
+        activePosition,
+        openPosition,
+        sell,
+        activity,
+        chat,
+        chatError,
+        subscribeChat,
+        sendChat,
+      }}
     >
       {children}
     </Ctx.Provider>

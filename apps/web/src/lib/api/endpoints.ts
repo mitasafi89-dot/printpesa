@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api/client';
 import type {
+  ActivityDto,
   AuthResult,
   DepositResult,
   GameConfigDto,
@@ -45,6 +46,10 @@ export interface PositionFilter extends PageParams {
 export const api = {
   health: () => apiFetch<{ status: string; time: string }>('/health'),
   gameConfig: () => apiFetch<GameConfigDto>('/game/config'),
+
+  // Engagement (public; activity feed for SSR / first paint — live updates arrive over WS)
+  activity: (limit = 30) =>
+    apiFetch<{ items: ActivityDto[] }>('/activity', { query: { limit } }),
 
   // Auth & profile
   register: (body: RegisterInput) => apiFetch<AuthResult>('/auth/register', { method: 'POST', body }),
