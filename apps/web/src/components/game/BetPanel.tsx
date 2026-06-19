@@ -23,10 +23,6 @@ const DURATION_OPTIONS = [10, 30, 60, 120];
 /** Stakes at/above this require a second confirming tap. */
 const CONFIRM_CENTS = 50000;
 
-function durationLabel(s: number): string {
-  return s % 60 === 0 ? `${s / 60}m` : `${s}s`;
-}
-
 export function BetPanel() {
   const hydrated = useHydrated();
   const token = useSession((s) => s.token);
@@ -44,7 +40,6 @@ export function BetPanel() {
 
   const minStakeCents = config?.minStakeCents ?? 5000;
   const maxStakeCents = config?.maxStakeCents;
-  const maxMultiplier = config?.maxMultiplier ?? 5;
   const defaultDurationS = config?.defaultDurationS ?? 10;
 
   const [stake, setStake] = useState<string>('');
@@ -74,7 +69,7 @@ export function BetPanel() {
   const validStake = Number.isInteger(stakeCents) && stakeCents >= minStakeCents;
   const overMax = maxStakeCents !== undefined && Number.isFinite(stakeCents) && stakeCents > maxStakeCents;
   const overBalance = !!token && Number.isFinite(stakeCents) && stakeCents > balanceReal;
-  const canTrade = validStake && !overMax && !overBalance && status === 'open';
+  const connecting = status !== 'open';
 
   // Disarm any pending confirm when the stake changes.
   useEffect(() => setArmed(null), [stake]);
@@ -87,8 +82,26 @@ export function BetPanel() {
     return null;
   })();
 
+  function chipActive(c: number): boolean {
+    const n = Number.parseFloat(stake);
+    return Number.isFinite(n) && kesToCents(n) === c;
+  }
+
+  function cycleDuration() {
+    const i = durations.indexOf(durationS);
+    setDurationS(durations[(i + 1) % durations.length] ?? durations[0]!);
+  }
+
   function handleDirection(dir: Direction) {
-    if (!canTrade) return;
+    if (!token) {
+      openAuth('login');
+      return;
+    }
+    if (user && !user.ageVerified) {
+      router.push('/account');
+      return;
+    }
+    if (!validStake || overMax || overBalance) return;
     if (stakeCents >= CONFIRM_CENTS && armed !== dir) {
       setArmed(dir);
       return;
@@ -97,41 +110,25 @@ export function BetPanel() {
     setArmed(null);
   }
 
-  // ── Render branches ────────────────────────────────────────────────
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (!hydrated || !config) {
     return (
-      <Card className="flex flex-col gap-3">
+      <Card className="flex flex-col gap-3 p-3">
+        <Skeleton className="h-12 w-full" />
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-12 w-full" />
       </Card>
     );
   }
 
-  const headerRow = (
-    <div className="flex items-center justify-between text-xs text-muted">
-      <span>
-        Min <Money cents={minStakeCents} className="text-fg" />
-      </span>
-      <span>
-        Max payout <span className="font-medium text-fg">×{maxMultiplier.toFixed(1)}</span>
-      </span>
-    </div>
-  );
-
-  // 1) A position is in flight — show live P&L + cash-out (single-open rule).
+  // ── A position is in flight — live P&L + cash-out (single-open rule) ─────────
   if (activePosition) {
     const canCashOut =
       activePosition.phase === 'open' && activePosition.sellable && !!activePosition.positionId;
     return (
-      <Card className="flex flex-col gap-3">
+      <Card className="flex flex-col gap-3 p-3">
         <LivePnl pos={activePosition} />
-        <Button
-          variant="secondary"
-          size="lg"
-          fullWidth
-          disabled={!canCashOut}
-          onClick={sell}
-        >
+        <Button variant="secondary" size="lg" fullWidth disabled={!canCashOut} onClick={sell}>
           {activePosition.phase === 'settling'
             ? 'Cashing out…'
             : canCashOut
@@ -145,117 +142,82 @@ export function BetPanel() {
     );
   }
 
-  // 2) Logged out — gate to auth.
-  if (!token) {
-    return (
-      <Card className="flex flex-col gap-3">
-        {headerRow}
-        <Button variant="primary" size="lg" fullWidth onClick={() => openAuth('login')}>
-          Log in to trade
-        </Button>
-      </Card>
-    );
-  }
+  const ageBlocked = !!token && !!user && !user.ageVerified;
 
-  // 3) Logged in but age not verified — gate to profile.
-  if (user && !user.ageVerified) {
-    return (
-      <Card className="flex flex-col gap-3">
-        {headerRow}
-        <p className="text-sm text-muted">Verify your age (18+) to start trading.</p>
-        <Button variant="primary" size="lg" fullWidth onClick={() => router.push('/account')}>
-          Verify age
-        </Button>
-      </Card>
-    );
-  }
-
-  // 4) Ready to trade.
+  // ── Idle — stake + duration + BUY/SELL (always visible) ─────────────────────
   return (
-    <Card className="flex flex-col gap-3">
-      {headerRow}
-
-      <div className="flex flex-col gap-1">
-        <label htmlFor="stake" className="text-xs text-muted">
-          Stake (KES)
-        </label>
+    <Card className="flex flex-col gap-3 p-3">
+      {/* Stake input with KES prefix */}
+      <div className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 px-3">
+        <span className="rounded-md bg-surface px-2 py-1 text-xs font-semibold text-muted">KES</span>
         <input
-          id="stake"
           inputMode="decimal"
           value={stake}
           onChange={(e) => setStake(e.target.value.replace(/[^0-9.]/g, ''))}
-          className={cn(
-            'h-11 w-full rounded-xl border bg-surface-2 px-3 text-base tabular-nums text-fg outline-none',
-            'focus-visible:ring-2 focus-visible:ring-accent',
-            errorHint ? 'border-down' : 'border-border',
-          )}
-          placeholder={String(centsToKes(minStakeCents))}
+          placeholder="0"
+          aria-label="Stake amount in KES"
+          className="h-12 w-full bg-transparent text-2xl font-bold tabular-nums text-fg outline-none placeholder:text-muted"
         />
-        <div className="grid grid-cols-4 gap-2">
-          {CHIP_CENTS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setStake(String(centsToKes(c)))}
-              className={cn(
-                'h-9 rounded-lg border text-xs font-medium transition',
-                stakeCents === c
-                  ? 'border-accent bg-accent/10 text-fg'
-                  : 'border-border bg-surface text-muted hover:text-fg',
-              )}
-            >
-              {centsToKes(c).toLocaleString('en-KE')}
-            </button>
-          ))}
-        </div>
       </div>
 
-      <div className="flex flex-col gap-1">
-        <span className="text-xs text-muted">Auto-sell timer</span>
-        <div className="inline-flex w-full rounded-xl border border-border bg-surface p-1">
-          {durations.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setDurationS(s)}
-              className={cn(
-                'h-8 flex-1 rounded-lg text-xs font-medium transition',
-                durationS === s ? 'bg-accent text-accent-fg' : 'text-muted hover:text-fg',
-              )}
-            >
-              {durationLabel(s)}
-            </button>
-          ))}
-        </div>
+      {/* Quick chips */}
+      <div className="grid grid-cols-4 gap-2">
+        {CHIP_CENTS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setStake(String(centsToKes(c)))}
+            className={cn(
+              'h-10 rounded-lg border text-sm font-semibold tabular-nums transition',
+              chipActive(c)
+                ? 'border-accent bg-accent/10 text-accent'
+                : 'border-border bg-surface-2 text-fg hover:border-accent/60',
+            )}
+          >
+            {centsToKes(c)}
+          </button>
+        ))}
       </div>
 
       {errorHint ? <p className="text-xs text-down">{errorHint}</p> : null}
-      {status !== 'open' ? (
-        <p className="text-xs text-muted">Connecting to the live market…</p>
+
+      {/* Auto-sell duration + idle Live P&L */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2">
+        <button type="button" onClick={cycleDuration} className="flex items-center gap-3" aria-label="Cycle trade duration">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-accent text-sm font-bold tabular-nums text-accent">
+            {durationS}
+          </span>
+          <span className="flex flex-col text-left leading-tight">
+            <span className="text-[10px] uppercase tracking-wide text-muted">Auto-sell</span>
+            <span className="text-xs text-fg">Trade duration</span>
+          </span>
+        </button>
+        <div className="flex flex-col items-end leading-tight">
+          <span className="text-[10px] uppercase tracking-wide text-muted">Live P&amp;L</span>
+          <Money cents={0} className="text-sm font-semibold text-fg" />
+        </div>
+      </div>
+
+      {connecting ? (
+        <p className="text-center text-xs text-muted">Connecting to the live market…</p>
       ) : null}
 
+      {/* BUY / SELL */}
       <div className="grid grid-cols-2 gap-3">
-        <Button
-          variant="up"
-          size="lg"
-          fullWidth
-          disabled={!canTrade}
-          onClick={() => handleDirection('buy')}
-        >
+        <Button variant="up" size="lg" fullWidth disabled={connecting} onClick={() => handleDirection('buy')}>
           {armed === 'buy' ? `Confirm · ${formatKes(stakeCents)}` : 'BUY'}
         </Button>
-        <Button
-          variant="down"
-          size="lg"
-          fullWidth
-          disabled={!canTrade}
-          onClick={() => handleDirection('sell')}
-        >
+        <Button variant="down" size="lg" fullWidth disabled={connecting} onClick={() => handleDirection('sell')}>
           {armed === 'sell' ? `Confirm · ${formatKes(stakeCents)}` : 'SELL'}
         </Button>
       </div>
+
       {armed ? (
         <p className="text-center text-[11px] text-muted">Tap again to confirm your stake.</p>
+      ) : ageBlocked ? (
+        <p className="text-center text-[11px] text-warn">Verify your age (18+) in Profile to trade.</p>
+      ) : !token ? (
+        <p className="text-center text-[11px] text-muted">You&apos;ll be asked to log in to place a trade.</p>
       ) : null}
     </Card>
   );

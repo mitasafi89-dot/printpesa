@@ -276,3 +276,62 @@ docs 13/16 updated if the phase changed a contract assumption.
 5. **Light theme** — required for MVP or dark-only?
 6. **`/game/ticks` + REST open/sell** — currently *not implemented* (doc 05 §9); confirm WS-only for
    MVP so FE3/FE4 don't block on the REST fallback.
+
+
+---
+
+## 13. FE8 — Trade-screen design replica (PrintPesa skin)
+
+> Added after a mobile design reference (a "High Trade"-style trade screen) was
+> supplied. Branding stays **PrintPesa**; only the *layout & visual system* are
+> replicated. Runtime target: local dev (engine + api + web together).
+
+**Goal:** the `/` trade screen matches the reference — one mobile-first screen with
+a branded top bar, price header, decorative asset ticker, live curve, a one-line
+activity ticker, and the stake / BUY / SELL panel over a 4-tab bottom nav.
+
+**Palette (extracted from the reference):** bg `#07090F`, surface `#0D1117`,
+surface-2 `#161B22`, border `#21262D`, fg `#E6EDF3`, muted `#8B949E`,
+up/BUY `#3FB950`, down/SELL `#E43D3F`, accent `#58A6FF`, brand-indigo `#6374E4`,
+bonus-yellow `#E3B341`. Tokens live in `globals.css`; Tailwind exposes `brand` and
+`warn` alongside the existing colours.
+
+**Deliverables**
+- `TopBar`: indigo "P" mark + PrintPesa wordmark; `Login` (outline) + `Sign Up`
+  (brand) buttons; balance pill.
+- `PriceHeader`: `BTC/KES` signed curve value + % pill (value×100), 24H high/low
+  (window extremes) and live online count. The number is the synthetic curve
+  value, **not** a real BTC price.
+- `TickerStrip`: **decorative** marquee of placeholder symbols — purely visual
+  dressing, no external data, no new integration (`aria-hidden`).
+- `GameCurve`: timeframe chips + `Rate:` readout; canvas keeps the
+  green-above / red-below split, gradient fill, axis labels and live dot
+  (re-themed via tokens).
+- `ActivityTicker`: **single-line** rotating live feed (WS `activity` + REST
+  `/activity` backfill). **Chat is removed from the trade screen** (revises FE5).
+- `BetPanel`: KES input + 50/100/200/500 chips + circular auto-sell duration +
+  idle Live P&L + **always-visible BUY/SELL** (auth / age / stake gating happens
+  on tap, so the buttons never disappear).
+- `BottomNav`: TRADE / DEPOSIT (`/wallet`) / HISTORY (`/history`) / PROFILE
+  (`/account`) with icons and an active pill. New thin `/history` route reuses the
+  wallet history tabs.
+
+**Bug fixes shipped with this phase**
+1. *Activity shown twice* — de-duplicate identical consecutive `activity`
+   broadcasts in the socket provider (guards the StrictMode double-subscribe); the
+   single-line ticker also shows one event at a time.
+2. *No BUY/SELL buttons* — the panel previously replaced the buttons with a
+   login / age gate; they are now always rendered (gating moves to the tap).
+3. *No tick data* — the curve & price stream only when the **engine (WS)** is
+   reachable and the **API** serves `/game/config`. Run all three locally:
+   `npm -w @printpesa/engine start` · `npm -w @printpesa/api start` ·
+   `npm -w @printpesa/web dev`, with `NEXT_PUBLIC_WS_URL=ws://localhost:8080` and
+   `NEXT_PUBLIC_API_BASE_URL=http://localhost:8081/api/v1`.
+
+**Acceptance:** the ≤411px screen matches the reference; typecheck + prod build
+green; BUY/SELL always visible; activity never duplicates; curve + price update
+live against the engine.
+
+**Revision to FE5:** chat is dropped from the trade screen (single-line activity
+ticker only). The chat backend (engine / API) and the socket plumbing remain
+available for a future dedicated surface.

@@ -16,6 +16,8 @@ const config: Config = {
         down: 'var(--pp-down)',
         accent: 'var(--pp-accent)',
         'accent-fg': 'var(--pp-accent-fg)',
+        brand: 'var(--pp-brand)',
+        warn: 'var(--pp-warn)',
       },
       borderRadius: { xl: '0.875rem', '2xl': '1.25rem' },
       boxShadow: { glow: '0 0 24px -6px var(--pp-accent)' },

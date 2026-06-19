@@ -1,50 +1,45 @@
- 'use client';
+'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Card } from '@/components/ui/Card';
+import { CURVE_AMPLITUDE, CURVE_BASE_RATE } from '@printpesa/shared/config';
 import { cn } from '@/lib/cn';
 import { api } from '@/lib/api/endpoints';
 import { useGameSocket } from '@/lib/game/GameSocketProvider';
 import { CurveCanvas } from '@/components/game/CurveCanvas';
 
 const DEFAULT_TIMEFRAMES = [30, 60, 120, 300];
-
-function labelFor(s: number): string {
-  return s % 60 === 0 ? `${s / 60}m` : `${s}s`;
-}
+const labelFor = (s: number): string => (s % 60 === 0 ? `${s / 60}m` : `${s}s`);
+const toValue = (rate: number) => (rate - CURVE_BASE_RATE) / CURVE_AMPLITUDE;
 
 export function GameCurve() {
-  const { status, online, fairness, getTicks, getLastTick } = useGameSocket();
-  const { data: config } = useQuery({ queryKey: ['gameConfig'], queryFn: api.gameConfig, staleTime: 5 * 60_000 });
+  const { getTicks, getLastTick, fairness } = useGameSocket();
+  const { data: config } = useQuery({
+    queryKey: ['gameConfig'],
+    queryFn: api.gameConfig,
+    staleTime: 5 * 60_000,
+  });
   const timeframes = config?.timeframesS && config.timeframesS.length > 0 ? config.timeframesS : DEFAULT_TIMEFRAMES;
   const [tf, setTf] = useState<number>(timeframes[0] ?? 30);
 
-  const statusDot = status === 'open' ? 'bg-up' : status === 'connecting' ? 'bg-yellow-400' : 'bg-down';
+  // Keep the live "Rate:" readout ticking without re-rendering the canvas loop.
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force((n) => (n + 1) % 1_000_000), 300);
+    return () => clearInterval(id);
+  }, []);
+
   const seedShort = useMemo(
     () => (fairness ? `${fairness.serverSeedHash.slice(0, 10)}…` : null),
     [fairness],
   );
+  const last = getLastTick();
+  const rateLabel = last ? toValue(last.rate).toFixed(4) : '—';
 
   return (
-    <Card className="flex flex-col gap-3 p-3 sm:p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-fg">BTC/KES</span>
-          <span className={cn('h-2 w-2 rounded-full', statusDot)} title={status} />
-        </div>
-        <div className="flex items-center gap-1 text-xs text-muted">
-          <span className="h-1.5 w-1.5 rounded-full bg-up" />
-          {online.toLocaleString('en-KE')} online
-        </div>
-      </div>
-
-      <div className="relative h-52 w-full overflow-hidden rounded-xl bg-surface-2/40 sm:h-72">
-        <CurveCanvas getTicks={getTicks} getLastTick={getLastTick} windowMs={tf * 1000} />
-      </div>
-
+    <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="inline-flex rounded-xl border border-border bg-surface p-1">
+        <div className="no-scrollbar inline-flex overflow-x-auto rounded-xl border border-border bg-surface p-1">
           {timeframes.map((s) => (
             <button
               key={s}
@@ -59,6 +54,13 @@ export function GameCurve() {
             </button>
           ))}
         </div>
+        <span className="shrink-0 rounded-lg border border-accent/60 bg-accent/10 px-3 py-1.5 text-xs font-semibold tabular-nums text-accent">
+          Rate: {rateLabel}
+        </span>
+      </div>
+
+      <div className="relative h-60 w-full overflow-hidden rounded-xl bg-surface sm:h-80">
+        <CurveCanvas getTicks={getTicks} getLastTick={getLastTick} windowMs={tf * 1000} />
       </div>
 
       {seedShort ? (
@@ -67,6 +69,6 @@ export function GameCurve() {
           {fairness?.tradeDate ? ` · ${fairness.tradeDate}` : ''}
         </p>
       ) : null}
-    </Card>
+    </div>
   );
 }

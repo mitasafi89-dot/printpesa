@@ -57,3 +57,28 @@ dashboard · `/r/:code` referral landing · auth modals overlaid.
 ## 7. Accessibility & UX
 - Clear win/loss feedback, responsible-gaming links, balance always visible, confirm on large stakes,
   disabled BUY/SELL when unauthenticated/insufficient balance with a helpful prompt.
+
+
+---
+
+## Addendum — Trade-screen design replica (FE8)
+
+The canonical player trade screen follows the supplied mobile reference. The single
+`/` screen, top → bottom:
+
+1. **Top bar** — indigo "P" brand mark + PrintPesa wordmark; `Login` (outline) +
+   `Sign Up` (brand); balance pill.
+2. **Price header** — `BTC/KES` signed curve value + % pill (value×100); 24H
+   high/low (window extremes); live online count. (Synthetic curve value, not a
+   real BTC price.)
+3. **Asset ticker** — decorative marquee of placeholder symbols (no real data).
+4. **Curve toolbar** — timeframe chips (30s/1m/2m/5m) + `Rate:` readout.
+5. **Curve** — green-above / red-below zero-axis split, gradient fill, axis
+   labels, live dot.
+6. **Activity ticker** — single line, rotates recent events. **No chat here.**
+7. **Bet panel** — KES input, 50/100/200/500 chips, circular auto-sell duration,
+   idle Live P&L, always-visible BUY/SELL.
+8. **Bottom nav** — TRADE / DEPOSIT / HISTORY / PROFILE.
+
+Branding remains **PrintPesa**. Palette and component breakdown:
+[17 — Frontend Build Plan](17-frontend-build-plan.md) §13.

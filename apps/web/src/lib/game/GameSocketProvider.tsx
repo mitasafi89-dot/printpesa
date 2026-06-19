@@ -328,7 +328,15 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
         case 'activity': {
           if (isActivityItem(data)) {
             const item = data;
-            setActivity((cur) => [item, ...cur].slice(0, MAX_ACTIVITY));
+            const sig = `${item.kind}|${item.username}|${item.amountCents}|${item.message}`;
+            setActivity((cur) => {
+              // Drop duplicate broadcasts (e.g. StrictMode double-socket or a re-emit).
+              const head = cur[0];
+              if (head && `${head.kind}|${head.username}|${head.amountCents}|${head.message}` === sig) {
+                return cur;
+              }
+              return [item, ...cur].slice(0, MAX_ACTIVITY);
+            });
           }
           break;
         }

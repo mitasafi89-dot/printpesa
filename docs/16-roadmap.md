@@ -75,3 +75,11 @@ Planned: `M0 → (M1 ∥ schema) → M2 ∥ M3 → M4 → M5 ∥ M6 → M7`.
 
 **What actually happened:** `M0 → M1 → M2 → M3 → M5 → M6` (back end + admin API), with **M4 (player
 web app) skipped**. Remaining: **M4 now (front-end, FE0–FE7 in doc 17) → M7 (hardening)**.
+
+
+### M4 update — trade-screen design replica (FE8)
+The player trade screen was reskinned to a supplied "High Trade"-style mobile
+reference (layout & visual only; branding stays **PrintPesa**). Chat was dropped
+from the trade view in favour of a single-line activity ticker, and a decorative
+asset ticker was added. Bug fixes: duplicate activity, missing BUY/SELL buttons,
+and live tick connectivity. Details: [17 — Frontend Build Plan](17-frontend-build-plan.md) §13 (FE8).

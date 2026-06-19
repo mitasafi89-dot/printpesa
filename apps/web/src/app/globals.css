@@ -4,29 +4,33 @@
 
 /* Dark-first design tokens. Light theme overrides under .light on <html>. */
 :root {
-  --pp-bg: #0a0b0e;
-  --pp-surface: #121419;
-  --pp-surface-2: #1a1d24;
-  --pp-border: #262a33;
-  --pp-fg: #e8eaed;
-  --pp-muted: #8b909a;
-  --pp-up: #22e07e;
-  --pp-down: #ff5470;
-  --pp-accent: #2ee6e6;
-  --pp-accent-fg: #04201f;
+  --pp-bg: #07090f;
+  --pp-surface: #0d1117;
+  --pp-surface-2: #161b22;
+  --pp-border: #21262d;
+  --pp-fg: #e6edf3;
+  --pp-muted: #8b949e;
+  --pp-up: #3fb950;
+  --pp-down: #e43d3f;
+  --pp-accent: #58a6ff;
+  --pp-accent-fg: #ffffff;
+  --pp-brand: #6374e4;
+  --pp-warn: #e3b341;
 }
 
 html.light {
-  --pp-bg: #f6f7f9;
+  --pp-bg: #f6f8fa;
   --pp-surface: #ffffff;
-  --pp-surface-2: #eef0f3;
-  --pp-border: #d9dde3;
-  --pp-fg: #14171c;
-  --pp-muted: #5a616b;
-  --pp-up: #12a35a;
-  --pp-down: #d23153;
-  --pp-accent: #0bb6c0;
+  --pp-surface-2: #eaeef2;
+  --pp-border: #d0d7de;
+  --pp-fg: #1f2328;
+  --pp-muted: #636c76;
+  --pp-up: #1a7f37;
+  --pp-down: #cf222e;
+  --pp-accent: #0969da;
   --pp-accent-fg: #ffffff;
+  --pp-brand: #4f46e5;
+  --pp-warn: #9a6700;
 }
 
 html, body {
@@ -42,3 +46,17 @@ body {
 /* Respect the iOS/Android home-indicator inset for bottom-sticky UI. */
 .pb-safe { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom)); }
 .h-safe-nav { height: calc(4rem + env(safe-area-inset-bottom)); }
+
+/* Horizontal marquee for the decorative asset ticker (duplicate children + -50%). */
+@keyframes pp-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.animate-marquee { animation: pp-marquee 28s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee { animation: none; }
+}
+
+/* Hide scrollbars on the horizontal chip/ticker rails while keeping them scrollable. */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
