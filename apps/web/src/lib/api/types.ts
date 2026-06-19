@@ -40,15 +40,36 @@ export interface GameConfigDto {
   timeframesS: number[];
 }
 
+/** GET /positions item — wire shape from apps/api `positionDto` (newest-first). */
 export interface PositionDto {
   id: string;
+  gameDayId: number | null;
   direction: Direction;
   stakeCents: Cents;
-  status: PositionStatus;
-  result: PositionResult | null;
+  entryRate: number;
+  exitRate: number | null;
   multiplier: number | null;
   payoutCents: Cents | null;
   pnlCents: Cents | null;
+  result: PositionResult | null;
+  durationS: number;
+  status: PositionStatus;
+  openedAt: number; // epoch ms
+  settledAt: number | null; // epoch ms, null while open
+}
+
+/** Provable-fairness commitment for a game-day (`serverSeed` is null until revealed). */
+export interface FairnessDto {
+  gameDayId: number;
+  tradeDate: string;
+  serverSeedHash: string;
+  serverSeed: string | null;
+  revealedAt: number | null;
+}
+
+/** GET /positions/:id — single position plus its fairness record. */
+export interface PositionDetailDto extends PositionDto {
+  fairness: FairnessDto | null;
 }
 
 /** GET /wallet/ledger item (signed amountCents; newest-first). */

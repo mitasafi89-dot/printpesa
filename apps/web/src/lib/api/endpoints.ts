@@ -6,11 +6,14 @@ import type {
   LedgerEntryDto,
   MeDto,
   Paginated,
+  PositionDetailDto,
+  PositionDto,
   TransactionDto,
   TransactionKind,
   WalletDto,
   WithdrawalResult,
 } from '@/lib/api/types';
+import type { PositionStatus } from '@printpesa/shared';
 
 export interface RegisterInput {
   phone: string;
@@ -32,6 +35,10 @@ export interface PageParams {
 export interface TransactionFilter extends PageParams {
   kind?: TransactionKind;
   status?: string;
+}
+
+export interface PositionFilter extends PageParams {
+  status?: PositionStatus;
 }
 
 /** Typed endpoint functions. One per route; grouped by domain. */
@@ -59,6 +66,15 @@ export const api = {
       token,
       query: { cursor: p.cursor ?? undefined, limit: p.limit, kind: p.kind, status: p.status },
     }),
+
+  // Bet history (positions)
+  positions: (token: string, p: PositionFilter = {}) =>
+    apiFetch<Paginated<PositionDto>>('/positions', {
+      token,
+      query: { cursor: p.cursor ?? undefined, limit: p.limit, status: p.status },
+    }),
+  position: (token: string, id: string) =>
+    apiFetch<PositionDetailDto>(`/positions/${id}`, { token }),
 
   // Payments (amounts are integer cents)
   createDeposit: (token: string, body: { amount: number; phone: string }) =>

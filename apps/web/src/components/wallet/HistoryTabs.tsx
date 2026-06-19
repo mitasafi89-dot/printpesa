@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { TransactionsList } from '@/components/wallet/TransactionsList';
 import { LedgerList } from '@/components/wallet/LedgerList';
+import { PositionHistory } from '@/components/positions/PositionHistory';
 
-type Tab = 'transactions' | 'ledger';
+type Tab = 'transactions' | 'ledger' | 'positions';
 
 export function HistoryTabs() {
   const [tab, setTab] = useState<Tab>('transactions');
@@ -18,8 +19,17 @@ export function HistoryTabs() {
         <TabButton active={tab === 'ledger'} onClick={() => setTab('ledger')}>
           Ledger
         </TabButton>
+        <TabButton active={tab === 'positions'} onClick={() => setTab('positions')}>
+          Bets
+        </TabButton>
       </div>
-      {tab === 'transactions' ? <TransactionsList /> : <LedgerList />}
+      {tab === 'transactions' ? (
+        <TransactionsList />
+      ) : tab === 'ledger' ? (
+        <LedgerList />
+      ) : (
+        <PositionHistory />
+      )}
     </div>
   );
 }

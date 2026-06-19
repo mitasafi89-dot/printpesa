@@ -12,7 +12,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && tsc -p apps/web/tsconfig.json --noEmit",
     "test": "node --import tsx --test",
     "engine": "tsx apps/engine/src/server.ts"
   },

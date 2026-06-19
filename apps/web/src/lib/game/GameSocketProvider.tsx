@@ -1,4 +1,4 @@
- 'use client';
+'use client';
 
 import {
   createContext,
@@ -8,9 +8,29 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { formatKes } from '@printpesa/shared/money';
 import { env } from '@/lib/env';
 import { useSession } from '@/lib/auth/session';
-import type { ConnStatus, Envelope, FairnessData, HelloData, OnlineData, Tick } from '@/lib/game/types';
+import { useToast } from '@/lib/toast/ToastProvider';
+import type { WalletDto } from '@/lib/api/types';
+import type {
+  ConnStatus,
+  Envelope,
+  FairnessData,
+  HelloData,
+  OnlineData,
+  Tick,
+} from '@/lib/game/types';
+import type {
+  ActivePosition,
+  BalanceData,
+  OpenPositionInput,
+  PositionOpenedData,
+  PositionSettledData,
+  PositionUpdateData,
+  WsErrorData,
+} from '@/lib/game/betting';
 
 const MAX_TICKS = 3000;
 
@@ -20,6 +40,12 @@ interface GameSocketValue {
   fairness: FairnessData | null;
   getTicks: () => Tick[];
   getLastTick: () => Tick | null;
+  /** The single in-flight position (optimistic → open → settling), or null. */
+  activePosition: ActivePosition | null;
+  /** Place a BUY/SELL position (optimistic; reconciled by `position_opened`). */
+  openPosition: (input: OpenPositionInput) => void;
+  /** Manually cash out the open position (only valid while `sellable`). */
+  sell: () => void;
 }
 
 const Ctx = createContext<GameSocketValue | null>(null);
@@ -31,10 +57,28 @@ function isTick(v: unknown): v is Tick {
   );
 }
 
+function errorTitle(code: string): string {
+  switch (code) {
+    case 'AUTH_REQUIRED':
+      return 'Log in to trade';
+    case 'AUTH_INVALID':
+      return 'Session expired — log in again';
+    case 'AGE_NOT_VERIFIED':
+      return 'Verify your age to trade';
+    case 'INSUFFICIENT_FUNDS':
+      return 'Insufficient balance';
+    default:
+      return 'Trade rejected';
+  }
+}
+
 export function GameSocketProvider({ children }: { children: React.ReactNode }) {
   const token = useSession((s) => s.token);
   const tokenRef = useRef<string | null>(token);
   tokenRef.current = token;
+
+  const qc = useQueryClient();
+  const toast = useToast();
 
   const ticksRef = useRef<Tick[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -42,16 +86,92 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
   const attemptRef = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
+  const clientSeq = useRef(0);
 
   const [status, setStatus] = useState<ConnStatus>('connecting');
   const [online, setOnline] = useState(0);
   const [fairness, setFairness] = useState<FairnessData | null>(null);
+  const [activePosition, setActivePosition] = useState<ActivePosition | null>(null);
+  const activeRef = useRef<ActivePosition | null>(null);
+
+  /** Keep ref + state in lockstep so socket handlers can read the current value. */
+  const setActive = useCallback(
+    (next: ActivePosition | null | ((cur: ActivePosition | null) => ActivePosition | null)) => {
+      const resolved = typeof next === 'function' ? next(activeRef.current) : next;
+      activeRef.current = resolved;
+      setActivePosition(resolved);
+    },
+    [],
+  );
 
   const getTicks = useCallback(() => ticksRef.current, []);
   const getLastTick = useCallback(
     () => (ticksRef.current.length > 0 ? ticksRef.current[ticksRef.current.length - 1]! : null),
     [],
   );
+
+  const send = useCallback((type: string, data: unknown): boolean => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type, data }));
+      return true;
+    }
+    return false;
+  }, []);
+
+  const setWalletReal = useCallback(
+    (real: number, currency?: string) => {
+      qc.setQueryData<WalletDto>(['wallet'], (old) =>
+        old ? { ...old, real } : { real, bonus: 0, currency: currency ?? 'KES' },
+      );
+    },
+    [qc],
+  );
+
+  const openPosition = useCallback(
+    (input: OpenPositionInput) => {
+      if (activeRef.current) return; // single-open rule
+      if (!tokenRef.current) {
+        toast.push({ tone: 'error', title: 'Log in to trade' });
+        return;
+      }
+      if (!send('open_position', input)) {
+        toast.push({ tone: 'error', title: 'Not connected', description: 'Reconnecting — try again shortly.' });
+        return;
+      }
+      const last = ticksRef.current[ticksRef.current.length - 1] ?? null;
+      const now = Date.now();
+      setActive({
+        positionId: null,
+        clientId: `c${++clientSeq.current}`,
+        direction: input.direction,
+        stakeCents: input.stakeCents,
+        durationS: input.durationS,
+        phase: 'pending',
+        entryRate: last?.rate ?? null,
+        expiresAtMs: now + input.durationS * 1000,
+        liveMultiplier: 1,
+        livePnlCents: 0,
+        secondsLeft: input.durationS,
+        sellable: false,
+      });
+      // Optimistic debit; reconciled by the authoritative `balance` push.
+      qc.setQueryData<WalletDto>(['wallet'], (old) =>
+        old ? { ...old, real: Math.max(0, old.real - input.stakeCents) } : old,
+      );
+    },
+    [qc, send, setActive, toast],
+  );
+
+  const sell = useCallback(() => {
+    const a = activeRef.current;
+    if (!a || !a.positionId || a.phase !== 'open' || !a.sellable) return;
+    if (!send('sell', { positionId: a.positionId })) {
+      toast.push({ tone: 'error', title: 'Not connected', description: 'Reconnecting — your position auto-settles at expiry.' });
+      return;
+    }
+    setActive({ ...a, phase: 'settling' });
+  }, [send, setActive, toast]);
 
   useEffect(() => {
     closedRef.current = false;
@@ -70,33 +190,112 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
     };
 
     const handle = (env_: Envelope) => {
+      const data = env_.data;
       switch (env_.type) {
         case 'hello': {
-          const d = env_.data as HelloData;
+          const d = data as HelloData;
           if (d?.serverSeedHash) setFairness({ serverSeedHash: d.serverSeedHash, tradeDate: d.tradeDate });
           break;
         }
         case 'tick': {
-          if (isTick(env_.data)) pushTick(env_.data);
+          if (isTick(data)) pushTick(data);
           break;
         }
         case 'tick_batch': {
-          const items = (env_.data as { ticks?: unknown[] })?.ticks ?? [];
+          const items = (data as { ticks?: unknown[] })?.ticks ?? [];
           for (const it of items) if (isTick(it)) pushTick(it);
           break;
         }
         case 'online': {
-          const d = env_.data as OnlineData;
+          const d = data as OnlineData;
           if (typeof d?.count === 'number') setOnline(d.count);
           break;
         }
         case 'fairness': {
-          const d = env_.data as FairnessData;
+          const d = data as FairnessData;
           if (d?.serverSeedHash) setFairness({ serverSeedHash: d.serverSeedHash, tradeDate: d.tradeDate });
           break;
         }
+        case 'balance': {
+          const d = data as BalanceData;
+          if (typeof d?.real === 'number') setWalletReal(d.real, d.currency);
+          break;
+        }
+        case 'position_opened': {
+          const d = data as PositionOpenedData;
+          setActive((cur) => ({
+            positionId: d.positionId,
+            clientId: cur?.clientId ?? `srv${d.positionId}`,
+            direction: d.direction,
+            stakeCents: d.stakeCents,
+            durationS: d.durationS,
+            phase: 'open',
+            entryRate: d.entryRate,
+            expiresAtMs: d.expiresAtMs,
+            liveMultiplier: cur?.liveMultiplier ?? 1,
+            livePnlCents: cur?.livePnlCents ?? 0,
+            secondsLeft: cur?.secondsLeft ?? d.durationS,
+            sellable: cur?.sellable ?? false,
+          }));
+          toast.push({
+            tone: 'info',
+            title: `Opened · ${d.direction === 'buy' ? 'BUY' : 'SELL'} ${formatKes(d.stakeCents)}`,
+            description: `Auto-sell in ${d.durationS}s`,
+          });
+          break;
+        }
+        case 'position_update': {
+          const d = data as PositionUpdateData;
+          setActive((cur) =>
+            cur && cur.positionId === d.positionId
+              ? {
+                  ...cur,
+                  phase: cur.phase === 'settling' ? 'settling' : 'open',
+                  liveMultiplier: d.liveMultiplier,
+                  livePnlCents: d.livePnlCents,
+                  secondsLeft: d.secondsLeft,
+                  sellable: d.sellable,
+                }
+              : cur,
+          );
+          break;
+        }
+        case 'position_settled': {
+          const d = data as PositionSettledData;
+          setActive((cur) => (cur && cur.positionId === d.positionId ? null : cur));
+          if (typeof d.balance === 'number') setWalletReal(d.balance);
+          void qc.invalidateQueries({ queryKey: ['positions'] });
+          void qc.invalidateQueries({ queryKey: ['ledger'] });
+          const won = d.result === 'win';
+          toast.push({
+            tone: won ? 'success' : 'error',
+            title: won
+              ? `Won ×${d.lockedMultiplier.toFixed(2)} · +${formatKes(d.payoutCents)}`
+              : `Lost · ${formatKes(d.pnlCents)}`,
+            description: d.mode === 'manual' ? 'Cashed out' : 'Auto-settled at expiry',
+          });
+          break;
+        }
+        case 'error': {
+          const d = data as WsErrorData;
+          const a = activeRef.current;
+          if (a && !a.positionId) {
+            // optimistic open never acked → roll back and re-sync balance
+            setActive(null);
+            void qc.invalidateQueries({ queryKey: ['wallet'] });
+          } else if (a && a.phase === 'settling') {
+            // cash-out failed → restore so the user can retry / let it auto-settle
+            setActive({ ...a, phase: 'open' });
+          }
+          toast.push({
+            tone: 'error',
+            title: errorTitle(d.code),
+            description: d.reasons && d.reasons.length > 0 ? d.reasons.join(' · ') : d.message,
+          });
+          break;
+        }
         default:
-          break; // balance / position_* / chat / activity handled in later phases
+          break; // chat / activity handled in FE5
       }
     };
 
@@ -165,10 +364,24 @@ export function GameSocketProvider({ children }: { children: React.ReactNode }) 
       if (ws && (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING)) ws.close();
       wsRef.current = null;
     };
+    // socket lifecycle is mount-scoped; stable callbacks/refs are intentionally omitted
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Authenticate the live socket the moment a token becomes available post-connect.
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (token && ws && ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'auth', data: { token } }));
+    }
+  }, [token]);
+
   return (
-    <Ctx.Provider value={{ status, online, fairness, getTicks, getLastTick }}>{children}</Ctx.Provider>
+    <Ctx.Provider
+      value={{ status, online, fairness, getTicks, getLastTick, activePosition, openPosition, sell }}
+    >
+      {children}
+    </Ctx.Provider>
   );
 }
 
