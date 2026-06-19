@@ -1,5 +1,14 @@
 # 13 — Frontend Spec (Player Web App)
 
+> **Implementation note:** This is the high-level *what* (screens / components / UX). The detailed,
+> phase-by-phase, mobile-first build plan is **[17 — Frontend Build Plan](17-frontend-build-plan.md)**
+> (phases FE0–FE7). This app corresponds to milestone **M4**, which is the current focus
+> (see [16 — Roadmap](16-roadmap.md)).
+>
+> **Auth correction:** the implemented backend uses **phone + password** (self-managed, scrypt +
+> self-issued JWT, **no OTP** — see [06 — Auth & KYC](06-auth-kyc.md)). Any "OTP" wording below is
+> superseded by phone + password.
+
 Stack: Next.js 14 + TypeScript + Tailwind. Dark theme matching the screenshot (near-black bg, neon
 green/red curve, cyan accents).
 
@@ -23,7 +32,7 @@ green/red curve, cyan accents).
 | `ActivityFeed` | streamed `activity` items |
 | `Chat` | streamed `chat`, input with rate-limit + filter UX |
 | `WalletWidget` | real/bonus balance, deposit/withdraw entry |
-| `AuthModals` | phone+OTP signup/login |
+| `AuthModals` | **phone + password** signup/login (no OTP — see doc 06) |
 
 ## 3. State & data
 - `useGameSocket()` hook manages WS connect/auth/reconnect, exposes ticks, position, balance.
@@ -40,8 +49,10 @@ green/red curve, cyan accents).
 `/` game · `/wallet` deposit/withdraw/history · `/account` profile+KYC · `/affiliate` marketer
 dashboard · `/r/:code` referral landing · auth modals overlaid.
 
-## 6. Responsive
-- Desktop: 3-column as above. Tablet/mobile: stack — curve top, bet panel sticky bottom, feed/chat in tabs.
+## 6. Responsive (mobile-first — see doc 17 §4)
+- **Mobile-first:** build & verify the 360px layout first — curve top, **bet panel sticky bottom**,
+  feed/chat in tabs — then enhance upward.
+- Tablet (`md`): two columns. Desktop (`lg`+): the 3-column layout above.
 
 ## 7. Accessibility & UX
 - Clear win/loss feedback, responsible-gaming links, balance always visible, confirm on large stakes,
