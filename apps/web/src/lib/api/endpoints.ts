@@ -1,14 +1,29 @@
 import { apiFetch } from '@/lib/api/client';
-import type { GameConfigDto, MeDto, WalletDto } from '@/lib/api/types';
+import type { AuthResult, GameConfigDto, MeDto, WalletDto } from '@/lib/api/types';
 
-/**
- * Endpoint skeleton. One typed function per route; filled out per phase.
- * FE0 ships the public reads used to bootstrap the shell.
- */
+export interface RegisterInput {
+  phone: string;
+  username: string;
+  password: string;
+  referral_code?: string;
+}
+
+export interface ProfileInput {
+  full_name: string;
+  date_of_birth: string;
+}
+
+/** Typed endpoint functions. One per route; grouped by domain. */
 export const api = {
   health: () => apiFetch<{ status: string; time: string }>('/health'),
   gameConfig: () => apiFetch<GameConfigDto>('/game/config'),
-  // Authenticated reads (wired into UI in FE1+).
+
+  register: (body: RegisterInput) => apiFetch<AuthResult>('/auth/register', { method: 'POST', body }),
+  login: (body: { phone: string; password: string }) =>
+    apiFetch<AuthResult>('/auth/login', { method: 'POST', body }),
   me: (token: string) => apiFetch<MeDto>('/auth/me', { token }),
+  updateProfile: (token: string, body: ProfileInput) =>
+    apiFetch<unknown>('/auth/me', { method: 'PATCH', token, body }),
+
   wallet: (token: string) => apiFetch<WalletDto>('/wallet', { token }),
 };

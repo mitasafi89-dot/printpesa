@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { Button } from '@/components/ui/Button';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
+import { AuthButtons } from '@/components/auth/AuthButtons';
 
 export function TopBar() {
   return (
@@ -18,8 +18,7 @@ export function TopBar() {
 
         <div className="ml-auto flex items-center gap-2">
           <ThemeToggle />
-          <Button variant="ghost" size="sm">Log in</Button>
-          <Button variant="primary" size="sm">Sign up</Button>
+          <AuthButtons />
         </div>
       </div>
     </header>

@@ -2,7 +2,7 @@
   "name": "printpesa",
   "private": true,
   "version": "0.1.0",
-  "description": "PrintPesa — authoritative real-money trade-prediction game engine (monorepo)",
+  "description": "PrintPesa \u2014 authoritative real-money trade-prediction game engine (monorepo)",
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -13,7 +13,7 @@
   },
   "scripts": {
     "typecheck": "tsc -b",
-    "test": "node --import tsx --test \"packages/**/*.test.ts\" \"apps/**/*.test.ts\"",
+    "test": "node --import tsx --test",
     "engine": "tsx apps/engine/src/server.ts"
   },
   "devDependencies": {

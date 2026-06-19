@@ -1,4 +1,4 @@
-import { formatKes, type Cents } from '@printpesa/shared';
+import { formatKes, type Cents } from '@printpesa/shared/money';
 import { cn } from '@/lib/cn';
 
 /** Renders integer KES cents as a formatted currency string. */

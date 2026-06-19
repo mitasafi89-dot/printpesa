@@ -1,4 +1,5 @@
-import { DEFAULT_CONFIG, formatKes } from '@printpesa/shared';
+import { DEFAULT_CONFIG } from '@printpesa/shared/config';
+import { formatKes } from '@printpesa/shared/money';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Money } from '@/components/ui/Money';
