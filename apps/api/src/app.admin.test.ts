@@ -75,3 +75,44 @@ test("admin cannot suspend another admin; a superadmin can", async () => {
     assert.equal(allowed.status, 200);
   } finally { await api.close(); }
 });
+
+test("admin manual balance adjustment credits the wallet, requires a reason, and is audited", async () => {
+  const api = await startTestApi();
+  try {
+    const uid = await register(api, "0712000010", "adj_target");
+
+    const credit = await req(api, "POST", `/api/v1/admin/wallets/${uid}/adjust`, { token: "fin-1:admin", body: { amountCents: 25_000, reason: "manual credit" } });
+    assert.equal(credit.status, 200);
+    const cb = await json(credit);
+    assert.equal(cb.newBalanceCents, 25_000);
+    assert.equal(cb.direction, "credit");
+    assert.equal(await api.payRepo.getBalance(uid), 25_000);
+
+    // direction:debit applies a negative adjustment regardless of magnitude sign
+    const debit = await req(api, "POST", `/api/v1/admin/wallets/${uid}/adjust`, { token: "fin-1:admin", body: { amountCents: 5_000, direction: "debit", reason: "clawback" } });
+    assert.equal((await json(debit)).newBalanceCents, 20_000);
+
+    const noReason = await req(api, "POST", `/api/v1/admin/wallets/${uid}/adjust`, { token: "fin-1:admin", body: { amountCents: 1_000 } });
+    assert.equal(noReason.status, 400);
+
+    const audit = await json(await req(api, "GET", "/api/v1/admin/audit", { token: "fin-1:admin" }));
+    assert.ok(audit.items.some((a: any) => a.action === "balance.adjust" && a.targetId === uid));
+  } finally { await api.close(); }
+});
+
+test("admin deposits monitor lists deposits and the reconcile read returns a summary + stale list", async () => {
+  const api = await startTestApi();
+  try {
+    const dep = await api.payRepo.createDeposit("u-test", 30_000, "254700000099");
+    await api.payRepo.attachStk(dep, "m1", "chk-x"); // -> processing (non-terminal)
+
+    const list = await json(await req(api, "GET", "/api/v1/admin/deposits", { token: "fin-1:admin" }));
+    assert.ok(Array.isArray(list.items) && list.items.length >= 1);
+    assert.ok(list.items.some((d: any) => d.checkoutRequestId === "chk-x" && d.status === "processing"));
+
+    const rec = await json(await req(api, "GET", "/api/v1/admin/deposits/reconcile?staleMinutes=0", { token: "fin-1:admin" }));
+    assert.equal(rec.staleMinutes, 0);
+    assert.ok(Array.isArray(rec.summary));
+    assert.ok(rec.stale.some((d: any) => d.checkoutRequestId === "chk-x"));
+  } finally { await api.close(); }
+});

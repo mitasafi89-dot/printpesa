@@ -124,3 +124,60 @@ test("listWithdrawals: lists withdrawal transactions, filterable by status", asy
   assert.ok(all.items.every((w) => w.status === "pending"));
   assert.equal((await admin.listWithdrawals({ status: "success" })).items.length, 0);
 });
+
+test("adjustBalance: credit/debit with mandatory reason, guards, overdraw and audit (J3)", async () => {
+  const { identity, payRepo, admin } = stack();
+  const p = (await identity.register("254700000050", "adj_user", HASH)).userId;
+  payRepo.seed(p, 10_000);
+
+  const credit = await admin.adjustBalance("actor", "admin", p, 5_000, "goodwill");
+  assert.deepEqual(credit, { userId: p, amountCents: 5_000, newBalanceCents: 15_000, direction: "credit" });
+  assert.equal(await payRepo.getBalance(p), 15_000);
+
+  const debit = await admin.adjustBalance("actor", "superadmin", p, -3_000, "correction");
+  assert.deepEqual(debit, { userId: p, amountCents: -3_000, newBalanceCents: 12_000, direction: "debit" });
+
+  await assert.rejects(admin.adjustBalance("actor", "admin", p, -1_000_000, "too much"), /INSUFFICIENT_FUNDS/);
+  await assert.rejects(admin.adjustBalance("actor", "admin", p, 1_000, "   "), /REASON_REQUIRED/);
+  await assert.rejects(admin.adjustBalance("actor", "admin", p, 0, "noop"), /INVALID_AMOUNT/);
+  await assert.rejects(admin.adjustBalance("actor", "player", p, 1_000, "x"), /NOT_AUTHORIZED/);
+  await assert.rejects(admin.adjustBalance("actor", "admin", "00000000-0000-0000-0000-000000000000", 1_000, "x"), /USER_NOT_FOUND/);
+
+  const audit = await admin.listAudit({});
+  assert.equal(audit.items.length, 2); // only the two successful mutations, newest first
+  assert.equal(audit.items[0]!.action, "balance.adjust");
+  assert.deepEqual(audit.items[0]!.detail as Record<string, unknown>, { amount: -3_000, reason: "correction", before: 15_000, after: 12_000 });
+});
+
+test("deposits monitor: lists deposits (with STK fields) and reconcile flags stale non-terminal pushes (J3)", async () => {
+  const identity = new InMemoryIdentityRepository();
+  const oldTime = Date.UTC(2020, 0, 1); // timestamps deposits in the distant past => stale vs any window
+  const payRepo = new InMemoryPaymentRepository(() => oldTime);
+  const admin = new AdminService(new InMemoryAdminRepository(identity, payRepo));
+  const p = (await identity.register("254700000060", "dep_user", HASH)).userId;
+  payRepo.seed(p, 0);
+
+  const ok = await payRepo.createDeposit(p, 100_000, "254700000060");
+  await payRepo.attachStk(ok, "m1", "chk-ok");
+  await payRepo.completeDeposit("chk-ok", 0, "ok", "RCPT9", {}); // -> success, receipt set
+  const stuck = await payRepo.createDeposit(p, 50_000, "254700000060");
+  await payRepo.attachStk(stuck, "m2", "chk-stuck"); // -> processing
+  await payRepo.createDeposit(p, 20_000, "254700000060"); // -> pending
+
+  const list = await admin.listDeposits({});
+  assert.equal(list.items.length, 3);
+  const success = list.items.find((d) => d.status === "success")!;
+  assert.equal(success.mpesaReceipt, "RCPT9");
+  assert.equal(success.checkoutRequestId, "chk-ok");
+  assert.equal((await admin.listDeposits({ status: "processing" })).items.length, 1);
+
+  const rec = await admin.depositsReconcile(15);
+  assert.equal(rec.staleMinutes, 15);
+  assert.deepEqual(rec.summary, [
+    { status: "pending", count: 1, amountCents: 20_000 },
+    { status: "processing", count: 1, amountCents: 50_000 },
+    { status: "success", count: 1, amountCents: 100_000 },
+  ]);
+  assert.equal(rec.stale.length, 2); // pending + processing only; success is terminal
+  assert.ok(rec.stale.every((d) => d.status === "pending" || d.status === "processing"));
+});

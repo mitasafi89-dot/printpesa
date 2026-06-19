@@ -22,7 +22,7 @@ export interface TransactionRecord {
 /** Filters for a player's transaction history. */
 export interface TxListQuery extends PageQuery { kind?: "deposit" | "withdrawal" | undefined; status?: string | undefined; }
 /** A transaction as the admin back office sees it (J2). */
-export interface AdminTxSnapshot { txId: string; userId: string; kind: "deposit" | "withdrawal"; amountCents: Cents; status: string; phone: string; createdAtMs: number; }
+export interface AdminTxSnapshot { txId: string; userId: string; kind: "deposit" | "withdrawal"; amountCents: Cents; status: string; phone: string; mpesaReceipt: string | null; checkoutRequestId: string | null; createdAtMs: number; }
 
 export interface PaymentRepository {
   getBalance(userId: string): Promise<Cents>;
@@ -147,8 +147,17 @@ export class InMemoryPaymentRepository implements PaymentRepository {
   /** All transactions as admin rows (withdrawal queue + finance aggregates). */
   adminTransactions(): AdminTxSnapshot[] {
     return [...this.txns.values()].map((t) => ({
-      txId: t.id, userId: t.userId, kind: t.kind, amountCents: t.amount, status: t.status, phone: t.phone, createdAtMs: t.createdAtMs,
+      txId: t.id, userId: t.userId, kind: t.kind, amountCents: t.amount, status: t.status, phone: t.phone,
+      mpesaReceipt: t.receipt, checkoutRequestId: t.checkoutId ?? null, createdAtMs: t.createdAtMs,
     }));
+  }
+  /** Apply a signed manual balance adjustment to a wallet (admin J3); returns the new balance.
+   *  Validation (role, reason, overdraw) is enforced by the admin repository / RPC. */
+  adminApplyAdjustment(userId: string, amountCents: Cents): Cents {
+    const next = (this.balances.get(userId) ?? 0) + amountCents;
+    this.balances.set(userId, next);
+    this.ledger.push({ userId, type: "adjustment", amount: amountCents, ref: "admin_actions" });
+    return next;
   }
   /** Total real-balance liability across all wallets. */
   adminWalletLiabilityCents(): Cents {

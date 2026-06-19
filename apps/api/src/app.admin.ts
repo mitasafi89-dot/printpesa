@@ -1,5 +1,5 @@
 import { Router, ApiError, requireAuth, requireRole, type Ctx } from "./http.js";
-import type { PageQuery, AdminUserListQuery, AdminWithdrawalListQuery } from "@printpesa/engine";
+import type { PageQuery, AdminUserListQuery, AdminWithdrawalListQuery, AdminDepositListQuery } from "@printpesa/engine";
 import type { ApiDeps } from "./app.js";
 
 /**
@@ -9,7 +9,10 @@ import type { ApiDeps } from "./app.js";
  *  - GET    /admin/users/:id                        user detail
  *  - POST   /admin/users/:id/{suspend|ban|reactivate}   set status (audited; 0021 RPC)
  *  - PATCH  /admin/affiliates/:id/rate              set commission rate (audited; 0021 RPC)
+ *  - POST   /admin/wallets/:id/adjust               manual credit/debit (J3; audited; 0022 RPC)
  *  - GET    /admin/withdrawals?status&cursor        withdrawal queue (read)
+ *  - GET    /admin/deposits?status&cursor           deposits monitor (J3; STK statuses)
+ *  - GET    /admin/deposits/reconcile?staleMinutes  deposits reconcile read (J3)
  *  - GET    /admin/audit?cursor                     audit trail (read)
  * Thin transport over the engine AdminService — guards/audit live in the RPCs / in-memory mirror.
  */
@@ -23,7 +26,11 @@ const ADMIN_STATUS: Readonly<Record<string, number>> = {
   NO_SELF_ACTION: 409,
   INVALID_STATUS: 400,
   INVALID_RATE: 400,
+  INVALID_AMOUNT: 400,
+  REASON_REQUIRED: 400,
+  INSUFFICIENT_FUNDS: 409,
   USER_NOT_FOUND: 404,
+  WALLET_NOT_FOUND: 404,
   NOT_AFFILIATE: 404,
   NOT_FOUND: 404,
 };
@@ -85,9 +92,33 @@ export function registerAdminRoutes(router: Router, deps: ApiDeps): void {
     return domain(() => deps.admin.setCommissionRate(ctx.claims!.userId, ctx.claims!.role ?? "player", ctx.params.id!, rate));
   });
 
+  router.post(`${BASE}/admin/wallets/:id/adjust`, auth, admin, async (ctx: Ctx) => {
+    const body = ctx.body && typeof ctx.body === "object" ? (ctx.body as Record<string, unknown>) : {};
+    const reason = typeof body.reason === "string" ? body.reason : "";
+    if (reason.trim() === "") throw new ApiError("REASON_REQUIRED", "reason is required", 400);
+    const raw = body.amountCents ?? body.amount;
+    const magnitude = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isInteger(magnitude) || magnitude === 0) throw new ApiError("INVALID_AMOUNT", "amountCents must be a non-zero integer (cents)", 400);
+    // Optional explicit direction makes the sign unambiguous; otherwise a signed amount is taken as-is.
+    const dir = body.direction;
+    const signed = dir === "credit" || dir === "debit" ? Math.abs(magnitude) * (dir === "debit" ? -1 : 1) : magnitude;
+    return domain(() => deps.admin.adjustBalance(ctx.claims!.userId, ctx.claims!.role ?? "player", ctx.params.id!, signed, reason));
+  });
+
   router.get(`${BASE}/admin/withdrawals`, auth, admin, async (ctx: Ctx) => {
     const q: AdminWithdrawalListQuery = { ...pageQuery(ctx), status: ctx.query.get("status") ?? undefined };
     return deps.admin.listWithdrawals(q);
+  });
+
+  router.get(`${BASE}/admin/deposits/reconcile`, auth, admin, async (ctx: Ctx) => {
+    const raw = ctx.query.get("staleMinutes");
+    const n = raw === null ? 15 : Number(raw);
+    return deps.admin.depositsReconcile(Number.isFinite(n) && n >= 0 ? n : 15);
+  });
+
+  router.get(`${BASE}/admin/deposits`, auth, admin, async (ctx: Ctx) => {
+    const q: AdminDepositListQuery = { ...pageQuery(ctx), status: ctx.query.get("status") ?? undefined };
+    return deps.admin.listDeposits(q);
   });
 
   router.get(`${BASE}/admin/audit`, auth, admin, async (ctx: Ctx) => deps.admin.listAudit(pageQuery(ctx)));

@@ -2,6 +2,7 @@ import type { Page, PageQuery } from "./paging.js";
 import type {
   AdminRepository, AdminOverview, AdminUserRow, AdminUserDetail, AdminWithdrawalRow, AdminAuditRow,
   AdminUserListQuery, AdminWithdrawalListQuery, SetUserStatusResult, SetCommissionRateResult,
+  AdjustBalanceResult, AdminDepositRow, AdminDepositListQuery, AdminDepositsReconcile,
 } from "./admin.js";
 
 /**
@@ -34,4 +35,13 @@ export class AdminService {
   listWithdrawals(q: AdminWithdrawalListQuery): Promise<Page<AdminWithdrawalRow>> { return this.repo.listWithdrawals(q); }
 
   listAudit(q: PageQuery): Promise<Page<AdminAuditRow>> { return this.repo.listAudit(q); }
+
+  /** Manual wallet credit/debit (J3) — signed cents, mandatory reason; guards + audit live in the repo/RPC. */
+  adjustBalance(actorId: string, actorRole: string, targetId: string, amountCents: number, reason: string): Promise<AdjustBalanceResult> {
+    return this.repo.adjustBalance(actorId, actorRole, targetId, amountCents, reason);
+  }
+
+  listDeposits(q: AdminDepositListQuery): Promise<Page<AdminDepositRow>> { return this.repo.listDeposits(q); }
+
+  depositsReconcile(staleMinutes: number): Promise<AdminDepositsReconcile> { return this.repo.depositsReconcile(staleMinutes); }
 }

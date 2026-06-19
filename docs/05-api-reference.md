@@ -151,6 +151,13 @@ All money fields are **cents (KES)**. Standard error: `{ "error": { "code", "mes
   superadmin acts on another admin, no self-action; both audited to `admin_actions`),
   `GET /admin/withdrawals?status` (queue read) and `GET /admin/audit` (audit trail). All lists
   cursor-paginated, newest-first.
+- **Admin finance — adjustments + deposits monitor (J3):** admin-gated. `POST /admin/wallets/:id/adjust`
+  (`{ amountCents | amount, direction?, reason }` — manual credit/debit of the real wallet via the
+  migration-0022 RPC `fn_admin_adjust_balance`: mandatory reason, non-zero signed cents, no overdraw;
+  writes a `ledger_entries` `adjustment` row and an audited `admin_actions` `balance.adjust` row),
+  `GET /admin/deposits?status` (deposits monitor — STK statuses with `mpesaReceipt`/`checkoutRequestId`)
+  and `GET /admin/deposits/reconcile?staleMinutes` (per-status totals + the non-terminal STK pushes
+  older than the window — the reconcile-against-M-Pesa candidates).
 - **Player + payments + admin (E2):** `/wallet`, `/chat` (GET/POST), `/deposits` +
   `/deposits/mpesa/callback`, `/withdrawals` + `/withdrawals/mpesa/result/:txId`,
   `/admin/withdrawals/:id/approve|reject`.

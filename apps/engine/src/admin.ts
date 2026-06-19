@@ -35,6 +35,19 @@ export interface AdminUserListQuery extends PageQuery { role?: string | undefine
 export interface AdminWithdrawalListQuery extends PageQuery { status?: string | undefined; }
 export interface SetUserStatusResult { userId: string; status: string; }
 export interface SetCommissionRateResult { userId: string; commissionRate: number; }
+/** Result of a manual wallet balance adjustment (J3). */
+export interface AdjustBalanceResult { userId: string; amountCents: Cents; newBalanceCents: Cents; direction: "credit" | "debit"; }
+/** A deposit transaction as the admin deposits monitor sees it (J3). */
+export interface AdminDepositRow {
+  txId: string; userId: string; amountCents: Cents; status: string; phone: string;
+  mpesaReceipt: string | null; checkoutRequestId: string | null; createdAtMs: number;
+}
+export interface AdminDepositListQuery extends PageQuery { status?: string | undefined; }
+/** One deposit-status bucket in the reconcile summary (J3). */
+export interface AdminDepositStatusBucket { status: string; count: number; amountCents: Cents; }
+/** Deposits reconcile read (J3): per-status totals + the non-terminal STK pushes that are stale
+ *  (older than `staleMinutes`) and therefore the candidates to reconcile against M-Pesa. */
+export interface AdminDepositsReconcile { summary: AdminDepositStatusBucket[]; staleMinutes: number; stale: AdminDepositRow[]; }
 
 /** Durable boundary for the admin back office (RPCs + reads / in-memory mirror). */
 export interface AdminRepository {
@@ -45,6 +58,9 @@ export interface AdminRepository {
   setCommissionRate(actorId: string, actorRole: string, targetId: string, rate: number): Promise<SetCommissionRateResult>;
   listWithdrawals(q: AdminWithdrawalListQuery): Promise<Page<AdminWithdrawalRow>>;
   listAudit(q: PageQuery): Promise<Page<AdminAuditRow>>;
+  adjustBalance(actorId: string, actorRole: string, targetId: string, amountCents: Cents, reason: string): Promise<AdjustBalanceResult>;
+  listDeposits(q: AdminDepositListQuery): Promise<Page<AdminDepositRow>>;
+  depositsReconcile(staleMinutes: number): Promise<AdminDepositsReconcile>;
 }
 
 const VALID_STATUS = ["active", "suspended", "banned"];
@@ -56,7 +72,7 @@ const ms = (v: unknown): number => (v instanceof Date ? v.getTime() : new Date(S
 /** Re-raise the bare admin error code the RPCs raise instead of the wrapped pg message. */
 function mapAdminError(e: unknown): never {
   const msg = (e as { message?: string })?.message ?? String(e);
-  const m = msg.match(/(NOT_AUTHORIZED|INVALID_STATUS|NO_SELF_ACTION|USER_NOT_FOUND|INSUFFICIENT_PRIVILEGE|INVALID_RATE|NOT_AFFILIATE)/);
+  const m = msg.match(/(NOT_AUTHORIZED|INVALID_STATUS|NO_SELF_ACTION|USER_NOT_FOUND|INSUFFICIENT_PRIVILEGE|INVALID_RATE|NOT_AFFILIATE|REASON_REQUIRED|INVALID_AMOUNT|INSUFFICIENT_FUNDS|WALLET_NOT_FOUND)/);
   throw new Error(m ? m[1] : msg);
 }
 
@@ -183,6 +199,54 @@ export class PgAdminRepository implements AdminRepository {
     }));
     return pageFrom(rows, limit, (a) => `${a.createdAtMs}:${a.id}`);
   }
+
+  async adjustBalance(actorId: string, actorRole: string, targetId: string, amountCents: Cents, reason: string): Promise<AdjustBalanceResult> {
+    try {
+      const r = await this.q.query("select user_id, amount, new_balance from fn_admin_adjust_balance($1,$2,$3,$4,$5)", [actorId, actorRole, targetId, amountCents, reason]);
+      const x = r.rows[0];
+      const amt = num(x.amount);
+      return { userId: String(x.user_id), amountCents: amt, newBalanceCents: num(x.new_balance), direction: amt >= 0 ? "credit" : "debit" };
+    } catch (e) { mapAdminError(e); }
+  }
+
+  async listDeposits(q: AdminDepositListQuery): Promise<Page<AdminDepositRow>> {
+    const limit = clampLimit(q.limit);
+    const cur = decodeKeyset(q.cursor);
+    const r = await this.q.query(
+      `select id, user_id, amount, status, phone, mpesa_receipt, checkout_request_id, created_at from transactions
+        where kind = 'deposit'
+          and ($1::text is null or status = $1)
+          and ($2::timestamptz is null or (created_at, id) < ($2::timestamptz, $3::uuid))
+        order by created_at desc, id desc
+        limit $4`,
+      [q.status ?? null, cur ? new Date(cur.tsMs).toISOString() : null, cur ? cur.id : null, limit + 1]);
+    const rows: AdminDepositRow[] = r.rows.map(mapDepositRow);
+    return pageFrom(rows, limit, (d) => `${d.createdAtMs}:${d.txId}`);
+  }
+
+  async depositsReconcile(staleMinutes: number): Promise<AdminDepositsReconcile> {
+    const s = await this.q.query(
+      `select status, count(*)::bigint as n, coalesce(sum(amount),0)::bigint as amt
+         from transactions where kind = 'deposit' group by status order by status`, []);
+    const summary: AdminDepositStatusBucket[] = s.rows.map((x) => ({ status: String(x.status), count: num(x.n), amountCents: num(x.amt) }));
+    const r = await this.q.query(
+      `select id, user_id, amount, status, phone, mpesa_receipt, checkout_request_id, created_at from transactions
+        where kind = 'deposit' and status in ('pending', 'processing')
+          and created_at < now() - ($1::int * interval '1 minute')
+        order by created_at desc, id desc
+        limit 100`,
+      [Math.max(0, Math.round(staleMinutes))]);
+    return { summary, staleMinutes, stale: r.rows.map(mapDepositRow) };
+  }
+}
+
+/** Map a raw deposit `transactions` row into the public AdminDepositRow. */
+function mapDepositRow(x: any): AdminDepositRow {
+  return {
+    txId: String(x.id), userId: String(x.user_id), amountCents: num(x.amount), status: String(x.status), phone: String(x.phone),
+    mpesaReceipt: x.mpesa_receipt == null ? null : String(x.mpesa_receipt),
+    checkoutRequestId: x.checkout_request_id == null ? null : String(x.checkout_request_id), createdAtMs: ms(x.created_at),
+  };
 }
 
 // ─────────────────────────── In-memory admin repository (tests) ───────────────────────────
@@ -198,6 +262,11 @@ function memKeyset<T extends { _ts: number; _id: string }>(all: T[], q: PageQuer
 }
 
 interface MemAudit { id: number; actorId: string; actorRole: string; action: string; targetType: string; targetId: string | null; detail: unknown; createdAtMs: number; }
+
+/** Project an admin transaction snapshot into the public AdminDepositRow shape. */
+function memDepositRow(t: { txId: string; userId: string; amountCents: Cents; status: string; phone: string; mpesaReceipt: string | null; checkoutRequestId: string | null; createdAtMs: number }): AdminDepositRow {
+  return { txId: t.txId, userId: t.userId, amountCents: t.amountCents, status: t.status, phone: t.phone, mpesaReceipt: t.mpesaReceipt, checkoutRequestId: t.checkoutRequestId, createdAtMs: t.createdAtMs };
+}
 
 /**
  * In-memory AdminRepository composing the in-memory identity + payment stores. It enforces the
@@ -309,6 +378,44 @@ export class InMemoryAdminRepository implements AdminRepository {
       _ts: a.createdAtMs, _id: String(a.id).padStart(12, "0"),
     }));
     return memKeyset(rows, q);
+  }
+
+  async adjustBalance(actorId: string, actorRole: string, targetId: string, amountCents: Cents, reason: string): Promise<AdjustBalanceResult> {
+    if (!ADMIN_ROLES.includes(actorRole)) throw new Error("NOT_AUTHORIZED");
+    if (!Number.isInteger(amountCents) || amountCents === 0) throw new Error("INVALID_AMOUNT");
+    if (!reason || reason.trim() === "") throw new Error("REASON_REQUIRED");
+    if (!this.identity.adminUser(targetId)) throw new Error("USER_NOT_FOUND");
+    const before = await this.payments.getBalance(targetId);
+    if (before + amountCents < 0) throw new Error("INSUFFICIENT_FUNDS");
+    const after = this.payments.adminApplyAdjustment(targetId, amountCents);
+    this.record(actorId, actorRole, "balance.adjust", "user", targetId, { amount: amountCents, reason, before, after });
+    return { userId: targetId, amountCents, newBalanceCents: after, direction: amountCents > 0 ? "credit" : "debit" };
+  }
+
+  async listDeposits(q: AdminDepositListQuery): Promise<Page<AdminDepositRow>> {
+    const rows = this.payments.adminTransactions()
+      .filter((t) => t.kind === "deposit" && (q.status === undefined || t.status === q.status))
+      .map((t) => ({ ...memDepositRow(t), _ts: t.createdAtMs, _id: t.txId }));
+    return memKeyset(rows, q);
+  }
+
+  async depositsReconcile(staleMinutes: number): Promise<AdminDepositsReconcile> {
+    const deposits = this.payments.adminTransactions().filter((t) => t.kind === "deposit");
+    const buckets = new Map<string, { count: number; amountCents: number }>();
+    for (const d of deposits) {
+      const b = buckets.get(d.status) ?? { count: 0, amountCents: 0 };
+      b.count += 1; b.amountCents += d.amountCents; buckets.set(d.status, b);
+    }
+    const summary = [...buckets.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([status, v]) => ({ status, count: v.count, amountCents: v.amountCents }));
+    const cutoff = Date.now() - Math.max(0, staleMinutes) * 60_000;
+    const stale = deposits
+      .filter((d) => (d.status === "pending" || d.status === "processing") && d.createdAtMs < cutoff)
+      .sort((a, b) => (b.createdAtMs - a.createdAtMs) || (a.txId < b.txId ? 1 : a.txId > b.txId ? -1 : 0))
+      .slice(0, 100)
+      .map(memDepositRow);
+    return { summary, staleMinutes, stale };
   }
 
   private record(actorId: string, actorRole: string, action: string, targetType: string, targetId: string | null, detail: unknown): void {

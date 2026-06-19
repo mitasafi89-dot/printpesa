@@ -57,7 +57,7 @@ written to `audit_log` (actor, before/after).
 | Audit log | — | view | ✓ |
 
 
-## 3. Implementation status (J2)
+## 3. Implementation status (J2–J3)
 
 The REST surface in `apps/api` ships the first admin slice (admin-gated; superadmin satisfies admin):
 
@@ -68,9 +68,11 @@ The REST surface in `apps/api` ships the first admin slice (admin-gated; superad
 | `POST /admin/users/:id/{suspend\|ban\|reactivate}` | 1.2 User mgmt | `fn_admin_set_user_status` (0021); admin->players, superadmin->admins, no self-action; audited. |
 | `PATCH /admin/affiliates/:id/rate` | 1.5 Affiliates | `fn_admin_set_commission_rate` (0021); 0..1; audited. |
 | `GET /admin/withdrawals` | 1.3 Finance | withdrawal-queue read (`status` filter). |
+| `POST /admin/wallets/:id/adjust` | 1.3 Finance | **J3** manual credit/debit; `fn_admin_adjust_balance` (0022); mandatory reason, no overdraw; ledger + audited. |
+| `GET /admin/deposits` | 1.3 Finance | **J3** deposits monitor — STK statuses + receipt/checkout id (`status` filter). |
+| `GET /admin/deposits/reconcile` | 1.3 Finance | **J3** reconcile read — per-status totals + stale non-terminal pushes (`staleMinutes`). |
 | `GET /admin/audit` | 1.8 Audit log | `admin_actions` trail, newest-first. |
 
 Every mutation writes an immutable `admin_actions` row (actor, role, before/after). Still to come:
-manual balance adjustment, deposits monitor + reconciliation, reports/CSV, game config + RTP monitor +
-seed rotation, affiliate payout approve/reject UI (RPCs already live, I4), engagement/chat moderation,
-and bonuses/promos.
+reports/CSV (J4), game config + RTP monitor + seed rotation (J5), affiliate payout approve/reject UI
+(RPCs already live, I4) + engagement/chat moderation (J6), and bonuses/promos (K1).
