@@ -10,6 +10,8 @@ import type { Querier } from "./wallet.js";
  */
 export interface ActivityRow { id: number; kind: ActivityKind; username: string; amountCents: Cents | null; isSimulated: boolean; message: string; createdAtMs: number; }
 export interface ChatRow { id: number; userId: string | null; username: string; message: string; createdAtMs: number; }
+/** A chat row as the admin moderation view sees it — visibility included (J6). */
+export interface AdminChatRow extends ChatRow { isHidden: boolean; }
 export interface InsertActivity { kind: ActivityKind; username: string; amountCents: Cents | null; isSimulated: boolean; message: string; }
 export interface InsertChat { userId: string | null; username: string; message: string; }
 
@@ -19,6 +21,9 @@ export interface EngagementRepository {
   insertChat(c: InsertChat): Promise<ChatRow>;
   listRecentChat(limit: number): Promise<ChatRow[]>;          // visible (not hidden) only, newest first
   hideChat(id: number): Promise<boolean>;                     // moderation; true if a visible row was hidden
+  unhideChat(id: number): Promise<boolean>;                   // moderation (J6); true if a hidden row was restored
+  /** Moderation list (J6): newest-first, includes hidden rows (with their visibility) when asked. */
+  adminListChat(limit: number, includeHidden: boolean): Promise<AdminChatRow[]>;
   getUsername(userId: string): Promise<string | null>;        // authoritative public handle for a player
 }
 
@@ -62,6 +67,17 @@ export class InMemoryEngagementRepository implements EngagementRepository {
     this.hidden.add(id);
     return true;
   }
+  async unhideChat(id: number): Promise<boolean> {
+    if (!this.hidden.has(id)) return false;
+    this.hidden.delete(id);
+    return true;
+  }
+  async adminListChat(limit: number, includeHidden: boolean): Promise<AdminChatRow[]> {
+    return this.chat
+      .filter((r) => includeHidden || !this.hidden.has(r.id))
+      .slice(-limit).reverse()
+      .map((r) => ({ ...r, isHidden: this.hidden.has(r.id) }));
+  }
   async getUsername(userId: string): Promise<string | null> { return this.usernames.get(userId) ?? null; }
 }
 
@@ -91,6 +107,18 @@ export class PgEngagementRepository implements EngagementRepository {
   async hideChat(id: number): Promise<boolean> {
     const r = await this.q.query("update chat_messages set is_hidden = true where id = $1 and is_hidden = false returning id", [id]);
     return r.rows.length > 0;
+  }
+  async unhideChat(id: number): Promise<boolean> {
+    const r = await this.q.query("update chat_messages set is_hidden = false where id = $1 and is_hidden = true returning id", [id]);
+    return r.rows.length > 0;
+  }
+  async adminListChat(limit: number, includeHidden: boolean): Promise<AdminChatRow[]> {
+    const r = await this.q.query(
+      `select id, user_id, username, message, is_hidden, created_at from chat_messages
+        where ($2::boolean or is_hidden = false)
+        order by created_at desc, id desc limit $1`,
+      [limit, includeHidden]);
+    return r.rows.map((x) => ({ id: Number(x.id), userId: x.user_id ?? null, username: String(x.username), message: String(x.message), isHidden: Boolean(x.is_hidden), createdAtMs: toMs(x.created_at) }));
   }
   async getUsername(userId: string): Promise<string | null> {
     const r = await this.q.query("select username from profiles where id = $1", [userId]);

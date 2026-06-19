@@ -1,5 +1,5 @@
 import { Router, ApiError, requireAuth, requireRole, type Ctx } from "./http.js";
-import type { PageQuery, AdminUserListQuery, AdminWithdrawalListQuery, AdminDepositListQuery, ReportRange } from "@printpesa/engine";
+import type { PageQuery, AdminUserListQuery, AdminWithdrawalListQuery, AdminDepositListQuery, ReportRange, GameConfigPatch, AdminPayoutListQuery } from "@printpesa/engine";
 import type { ApiDeps } from "./app.js";
 
 /**
@@ -35,7 +35,19 @@ const ADMIN_STATUS: Readonly<Record<string, number>> = {
   WALLET_NOT_FOUND: 404,
   NOT_AFFILIATE: 404,
   NOT_FOUND: 404,
+  // J5 — game config + seed rotation
+  INVALID_CONFIG: 400,
+  INVALID_DATE: 400,
+  PAST_DATE: 409,
+  SEED_REVEALED: 409,
+  // J6 — affiliate payout decisions
+  PAYOUT_NOT_FOUND: 404,
+  B2C_UNAVAILABLE: 503,
 };
+
+/** Integer game_config fields (cents/durations) — must be whole numbers; the rest may be fractional. */
+const CONFIG_INT_FIELDS = new Set(["minStakeCents", "maxStakeCents", "defaultDurationS", "tickRateMs"]);
+const CONFIG_FIELDS = ["houseEdge", "maxMultiplier", "minStakeCents", "maxStakeCents", "defaultDurationS", "tickRateMs", "driftBias", "volatility"] as const;
 
 /** suspend/ban/reactivate -> the account status the RPC applies. */
 const STATUS_ACTION: Readonly<Record<string, string>> = { suspend: "suspended", ban: "banned", reactivate: "active" };
@@ -95,9 +107,50 @@ function sendCsv(ctx: Ctx, filename: string, header: readonly string[], rows: Re
 /** True when `?format=csv` is requested. */
 const wantsCsv = (ctx: Ctx): boolean => (ctx.query.get("format") ?? "").toLowerCase() === "csv";
 
+/** Parse a `?limit=` query param for plain (non-cursor) lists, clamped to [1, max]. */
+function listLimit(ctx: Ctx, def: number, max = 100): number {
+  const raw = ctx.query.get("limit");
+  if (raw === null) return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) throw new ApiError("INVALID_LIMIT", "limit must be a positive integer", 400);
+  return Math.min(Math.floor(n), max);
+}
+
+/** Parse a partial game_config patch (J5): numeric fields only, at least one, integers where required. */
+function parseGameConfigPatch(ctx: Ctx): GameConfigPatch {
+  const body = ctx.body && typeof ctx.body === "object" ? (ctx.body as Record<string, unknown>) : {};
+  const patch: Record<string, number> = {};
+  for (const key of CONFIG_FIELDS) {
+    const raw = body[key];
+    if (raw === undefined || raw === null) continue;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(n)) throw new ApiError("VALIDATION", `${key} must be a finite number`, 400);
+    if (CONFIG_INT_FIELDS.has(key) && !Number.isInteger(n)) throw new ApiError("VALIDATION", `${key} must be an integer (cents/seconds/ms)`, 400);
+    patch[key] = n;
+  }
+  if (Object.keys(patch).length === 0) throw new ApiError("VALIDATION", "provide at least one config field to update", 400);
+  return patch as GameConfigPatch;
+}
+
+/** Require a non-empty `id`/`tradeDate` `YYYY-MM-DD` body field (J5 seed rotation). */
+function bodyTradeDate(ctx: Ctx): string {
+  const body = ctx.body && typeof ctx.body === "object" ? (ctx.body as Record<string, unknown>) : {};
+  const v = body.tradeDate ?? body.date;
+  if (typeof v !== "string" || !DATE_RE.test(v)) throw new ApiError("INVALID_DATE", "tradeDate must be YYYY-MM-DD", 400);
+  return v;
+}
+
+/** Parse a positive-integer path param (chat message id). */
+function intParam(ctx: Ctx, name: string): number {
+  const n = Number(ctx.params[name]);
+  if (!Number.isInteger(n) || n <= 0) throw new ApiError("INVALID_ID", `${name} must be a positive integer`, 400);
+  return n;
+}
+
 export function registerAdminRoutes(router: Router, deps: ApiDeps): void {
   const auth = requireAuth(deps.verifier);
   const admin = requireRole("admin");
+  const superadmin = requireRole("superadmin");
 
   router.get(`${BASE}/admin/overview`, auth, admin, async () => deps.admin.overview());
 
@@ -179,4 +232,49 @@ export function registerAdminRoutes(router: Router, deps: ApiDeps): void {
   });
 
   router.get(`${BASE}/admin/audit`, auth, admin, async (ctx: Ctx) => deps.admin.listAudit(pageQuery(ctx)));
+
+  // ── J5: game configuration + RTP monitor + seed rotation (superadmin mutations) ───────────────
+
+  router.get(`${BASE}/admin/game-config`, auth, admin, async () => deps.admin.getGameConfig());
+
+  router.patch(`${BASE}/admin/game-config`, auth, superadmin, async (ctx: Ctx) => {
+    const patch = parseGameConfigPatch(ctx);
+    return domain(() => deps.admin.updateGameConfig(ctx.claims!.userId, ctx.claims!.role ?? "player", patch));
+  });
+
+  router.get(`${BASE}/admin/rtp`, auth, admin, async () => deps.admin.rtpMonitor());
+
+  router.get(`${BASE}/admin/seeds`, auth, admin, async (ctx: Ctx) => ({ items: await deps.admin.listSeeds(listLimit(ctx, 30)) }));
+
+  router.post(`${BASE}/admin/seeds/rotate`, auth, superadmin, async (ctx: Ctx) =>
+    domain(() => deps.admin.rotateSeed(ctx.claims!.userId, ctx.claims!.role ?? "player", bodyTradeDate(ctx))));
+
+  // ── J6: affiliate payout approve/reject QUEUE ────────────────────────────────────────────────
+  // The approve/reject *actions* already ship in app.affiliate.ts (I4) at
+  // /admin/affiliate/payouts/:id/{approve,reject} (now audited). J6 adds the queue the UI lists from.
+  router.get(`${BASE}/admin/affiliate/payouts`, auth, admin, async (ctx: Ctx) => {
+    const q: AdminPayoutListQuery = { ...pageQuery(ctx), status: ctx.query.get("status") ?? undefined };
+    return deps.admin.listAffiliatePayouts(q);
+  });
+
+  // ── J6: chat moderation ──────────────────────────────────────────────────────────────────────
+
+  router.get(`${BASE}/admin/chat`, auth, admin, async (ctx: Ctx) => {
+    const includeHidden = (ctx.query.get("includeHidden") ?? "").toLowerCase() === "true";
+    return { items: await deps.admin.listChat(listLimit(ctx, 50), includeHidden) };
+  });
+
+  router.post(`${BASE}/admin/chat/:id/hide`, auth, admin, async (ctx: Ctx) => {
+    const id = intParam(ctx, "id");
+    const hidden = await deps.admin.hideChat(ctx.claims!.userId, ctx.claims!.role ?? "player", id);
+    if (!hidden) throw new ApiError("NOT_FOUND", `no visible chat message ${id}`, 404);
+    return { id, hidden: true };
+  });
+
+  router.post(`${BASE}/admin/chat/:id/unhide`, auth, admin, async (ctx: Ctx) => {
+    const id = intParam(ctx, "id");
+    const restored = await deps.admin.unhideChat(ctx.claims!.userId, ctx.claims!.role ?? "player", id);
+    if (!restored) throw new ApiError("NOT_FOUND", `no hidden chat message ${id}`, 404);
+    return { id, hidden: false };
+  });
 }

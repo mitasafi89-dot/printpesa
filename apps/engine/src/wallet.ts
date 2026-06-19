@@ -63,6 +63,8 @@ export interface GameRepository {
   ensureGameDay(tradeDate: string, serverSeedHash: string): Promise<number | null>;
   /** Reveal a past day's seed (commitment- and past-only-checked in the DB). Returns whether it took effect. */
   revealSeed(tradeDate: string, serverSeed: string): Promise<boolean>;
+  /** Durable seed version for a day (0 unless a superadmin forced a rotation; see `seed_overrides`, J5). */
+  getSeedVersion(tradeDate: string): Promise<number>;
   /** All positions still open — the crash-recovery work list. */
   listOpenPositions(): Promise<OpenPositionRow[]>;
   /** Public fairness record for a day, or null if the day is unknown. */
@@ -95,6 +97,7 @@ export class InMemoryGameRepository implements GameRepository {
   private balances = new Map<string, Cents>();
   private positions = new Map<string, MemPos>();
   private days = new Map<string, MemDay>();
+  private seedVersions = new Map<string, number>();
   private nextDayId = 1;
   private posSeq = 0;
   private ledgerSeq = 0;
@@ -153,6 +156,15 @@ export class InMemoryGameRepository implements GameRepository {
     day.serverSeed = serverSeed;
     day.revealedAt = new Date().toISOString();
     return true;
+  }
+
+  async getSeedVersion(tradeDate: string): Promise<number> {
+    return this.seedVersions.get(tradeDate) ?? 0;
+  }
+
+  /** Test/dev seam: force a day's seed version (mirrors the `seed_overrides` upsert, J5). */
+  setSeedVersion(tradeDate: string, version: number): void {
+    this.seedVersions.set(tradeDate, version);
   }
 
   async listOpenPositions(): Promise<OpenPositionRow[]> {
@@ -258,6 +270,10 @@ export class PgGameRepository implements GameRepository {
   async revealSeed(tradeDate: string, serverSeed: string): Promise<boolean> {
     const r = await this.q.query("select fn_reveal_game_day($1,$2) as ok", [tradeDate, serverSeed]);
     return Boolean(r.rows[0]?.ok);
+  }
+  async getSeedVersion(tradeDate: string): Promise<number> {
+    const r = await this.q.query("select version from seed_overrides where trade_date = $1", [tradeDate]);
+    return r.rows.length ? Number(r.rows[0].version) : 0;
   }
   async listOpenPositions(): Promise<OpenPositionRow[]> {
     const r = await this.q.query(

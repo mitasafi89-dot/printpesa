@@ -65,6 +65,8 @@ export interface AdminPlaySnapshot { userId: string; stakeCents: number; payoutC
 export interface AdminReportPlay { userId: string; period: string; stakeCents: number; payoutCents: number; }
 /** A commission bucket for admin accrued/paid aggregation (J2). */
 export interface AdminCommissionSnapshot { commissionCents: number; status: string; }
+/** A payout request as the admin approve/reject queue sees it (J6). */
+export interface AdminPayoutSnapshot { payoutId: string; affiliateId: string; username: string; phone: string; amountCents: number; status: string; approvedBy: string | null; createdAtMs: number; }
 
 export interface IdentityRepository {
   /**
@@ -299,7 +301,7 @@ interface MemAffiliate { userId: string; referralCode: string; commissionRate: n
 interface MemPlay { referredUser: string; period: string; stakeCents: number; payoutCents: number; openedAtMs: number; }
 interface MemCommission { id: number; affiliateId: string; referredUser: string; period: string; ggr: number; commission: number; status: string; createdAtMs: number; payoutId: string | null; }
 interface MemReferral { id: number; affiliateId: string; referredUser: string; createdAtMs: number; }
-interface MemPayout { id: string; affiliateId: string; amount: number; status: string; approvedBy: string | null; conversationId: string | null; receipt: string | null; resultCode: number | null; }
+interface MemPayout { id: string; affiliateId: string; amount: number; status: string; approvedBy: string | null; conversationId: string | null; receipt: string | null; resultCode: number | null; createdAtMs: number; }
 
 /** In-memory identity store mirroring the RPC contracts (tests + dev). */
 export class InMemoryIdentityRepository implements IdentityRepository, AffiliateRepository {
@@ -446,7 +448,7 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
     const amount = reserved.reduce((s, c) => s + c.commission, 0);
     if (amount <= 0) throw new Error("NO_AVAILABLE_COMMISSION");
     const id = randomUUID();
-    this.payouts.set(id, { id, affiliateId: userId, amount, status: "requested", approvedBy: null, conversationId: null, receipt: null, resultCode: null });
+    this.payouts.set(id, { id, affiliateId: userId, amount, status: "requested", approvedBy: null, conversationId: null, receipt: null, resultCode: null, createdAtMs: Date.now() });
     for (const c of reserved) c.payoutId = id;   // snapshot the covered buckets
     return { payoutId: id, amountCents: amount };
   }
@@ -555,6 +557,20 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
     let n = 0;
     for (const p of this.payouts.values()) if (p.status === "requested" || p.status === "approved") n += 1;
     return n;
+  }
+  /** All payout requests (optionally filtered by status) as admin queue snapshots (J6). */
+  adminListPayouts(status?: string): AdminPayoutSnapshot[] {
+    const out: AdminPayoutSnapshot[] = [];
+    for (const p of this.payouts.values()) {
+      if (status !== undefined && p.status !== status) continue;
+      const u = this.byId.get(p.affiliateId);
+      out.push({
+        payoutId: p.id, affiliateId: p.affiliateId,
+        username: u?.username ?? p.affiliateId, phone: u?.phone ?? "",
+        amountCents: p.amount, status: p.status, approvedBy: p.approvedBy, createdAtMs: p.createdAtMs,
+      });
+    }
+    return out;
   }
   private toAdminUser(u: MemUser): AdminUserSnapshot {
     return {

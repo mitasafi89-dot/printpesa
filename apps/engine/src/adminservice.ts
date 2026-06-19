@@ -4,6 +4,8 @@ import type {
   AdminUserListQuery, AdminWithdrawalListQuery, SetUserStatusResult, SetCommissionRateResult,
   AdjustBalanceResult, AdminDepositRow, AdminDepositListQuery, AdminDepositsReconcile,
   ReportRange, DailyReportRow, UserReportRow,
+  GameConfigRow, GameConfigPatch, RtpMonitor, AdminSeedRow, SeedRotateResult,
+  AdminPayoutRow, AdminPayoutListQuery, AdminChatModRow,
 } from "./admin.js";
 
 /**
@@ -51,4 +53,44 @@ export class AdminService {
 
   /** Per-user operator finance report (J4) — same metrics, ordered by GGR desc. */
   reportByUser(range: ReportRange): Promise<UserReportRow[]> { return this.repo.reportByUser(range); }
+
+  // ── J5: game config + RTP monitor + seed rotation ────────────────────────────────────────────
+
+  /** Current game_config singleton (J5). */
+  getGameConfig(): Promise<GameConfigRow> { return this.repo.getGameConfig(); }
+
+  /** Edit game_config (J5; superadmin) — partial patch; guards + validation + audit live in the repo/RPC. */
+  updateGameConfig(actorId: string, actorRole: string, patch: GameConfigPatch): Promise<GameConfigRow> {
+    return this.repo.updateGameConfig(actorId, actorRole, patch);
+  }
+
+  /** Realised RTP vs target across rolling windows, with a drift alert (J5). */
+  rtpMonitor(): Promise<RtpMonitor> { return this.repo.rtpMonitor(); }
+
+  /** Provably-fair day rows: commitment hash, seed version, reveal state (J5). */
+  listSeeds(limit: number): Promise<AdminSeedRow[]> { return this.repo.listSeeds(limit); }
+
+  /** Force-rotate a day's seed (J5; superadmin) — bumps the durable seed version; audited. */
+  rotateSeed(actorId: string, actorRole: string, tradeDate: string): Promise<SeedRotateResult> {
+    return this.repo.rotateSeed(actorId, actorRole, tradeDate);
+  }
+
+  // ── J6: affiliate payout queue + chat moderation ─────────────────────────────────────────────
+
+  /** Affiliate payout approve/reject queue (J6). */
+  listAffiliatePayouts(q: AdminPayoutListQuery): Promise<Page<AdminPayoutRow>> { return this.repo.listAffiliatePayouts(q); }
+
+  /** Chat moderation list (J6) — newest-first, includes hidden rows when asked. */
+  listChat(limit: number, includeHidden: boolean): Promise<AdminChatModRow[]> { return this.repo.listChat(limit, includeHidden); }
+
+  /** Hide a chat message (J6; audited). */
+  hideChat(actorId: string, actorRole: string, id: number): Promise<boolean> { return this.repo.hideChat(actorId, actorRole, id); }
+
+  /** Restore a hidden chat message (J6; audited). */
+  unhideChat(actorId: string, actorRole: string, id: number): Promise<boolean> { return this.repo.unhideChat(actorId, actorRole, id); }
+
+  /** Append an audit row for an action whose mutation runs in another service/RPC (J6 payout decisions). */
+  recordAction(actorId: string, actorRole: string, action: string, targetType: string, targetId: string | null, detail: unknown): Promise<void> {
+    return this.repo.recordAction(actorId, actorRole, action, targetType, targetId, detail);
+  }
 }

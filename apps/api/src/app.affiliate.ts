@@ -83,11 +83,21 @@ export function registerAffiliateRoutes(router: Router, deps: ApiDeps): void {
       return { status: 201, body: { payoutId: r.payoutId, amountCents: r.amountCents } };
     }));
 
+  // Approve/reject write an immutable admin_actions audit row (J6) so the payout queue decisions
+  // are auditable alongside every other admin mutation.
   router.post(`${BASE}/admin/affiliate/payouts/:id/approve`, auth, admin, async (ctx: Ctx) =>
-    domain(() => deps.affiliate.approvePayout(ctx.params.id!, ctx.claims!.userId)));
+    domain(async () => {
+      const res = await deps.affiliate.approvePayout(ctx.params.id!, ctx.claims!.userId);
+      await deps.admin.recordAction(ctx.claims!.userId, ctx.claims!.role ?? "player", "affiliate.payout.approve", "affiliate_payout", ctx.params.id!, res);
+      return res;
+    }));
 
   router.post(`${BASE}/admin/affiliate/payouts/:id/reject`, auth, admin, async (ctx: Ctx) =>
-    domain(async () => ({ rejected: await deps.affiliate.rejectPayout(ctx.params.id!, ctx.claims!.userId) })));
+    domain(async () => {
+      const rejected = await deps.affiliate.rejectPayout(ctx.params.id!, ctx.claims!.userId);
+      await deps.admin.recordAction(ctx.claims!.userId, ctx.claims!.role ?? "player", "affiliate.payout.reject", "affiliate_payout", ctx.params.id!, { rejected });
+      return { rejected };
+    }));
 
   // Public: Daraja B2C result for a payout (network-allowlisted at the edge). Always acks.
   router.post(`${BASE}/affiliate/payouts/mpesa/result/:payoutId`, async (ctx: Ctx) => {

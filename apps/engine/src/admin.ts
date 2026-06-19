@@ -1,8 +1,9 @@
-import type { Cents } from "@printpesa/shared";
+import { DEFAULT_CONFIG, type Cents } from "@printpesa/shared";
 import type { Querier } from "./wallet.js";
 import { type Page, type PageQuery, clampLimit, decodeKeyset, pageFrom } from "./paging.js";
 import type { InMemoryIdentityRepository } from "./identity.js";
 import type { InMemoryPaymentRepository } from "./payments.js";
+import { InMemoryEngagementRepository } from "./engagement.js";
 
 /**
  * Admin back office (J2) — the operator domain seam the HTTP API binds to. Read aggregates
@@ -56,6 +57,35 @@ export interface DailyReportRow { date: string; depositsCents: Cents; withdrawal
 /** Per-user finance totals over the report window (J4). */
 export interface UserReportRow { userId: string; username: string; depositsCents: Cents; withdrawalsCents: Cents; turnoverCents: Cents; ggrCents: Cents; }
 
+// ── J5: game configuration, RTP monitor, seed rotation ─────────────────────────────────────────
+/** The live game_config singleton as the admin panel sees it (J5). */
+export interface GameConfigRow {
+  houseEdge: number; maxMultiplier: number; minStakeCents: Cents; maxStakeCents: Cents;
+  defaultDurationS: number; tickRateMs: number; driftBias: number; volatility: number;
+  rtpTarget: number;                 // derived: 1 - house_edge
+  updatedBy: string | null; updatedAtMs: number;
+}
+/** Partial game_config edit (J5). Only provided keys change; the rest are left untouched. */
+export interface GameConfigPatch {
+  houseEdge?: number; maxMultiplier?: number; minStakeCents?: number; maxStakeCents?: number;
+  defaultDurationS?: number; tickRateMs?: number; driftBias?: number; volatility?: number;
+}
+/** Realised RTP over one rolling window (J5). `realisedRtp` is null when there is no turnover yet. */
+export interface RtpWindowRow { window: string; settledPositions: number; turnoverCents: Cents; payoutCents: Cents; realisedRtp: number | null; }
+/** RTP monitor: realised vs target across rolling windows, with a drift alert (J5). */
+export interface RtpMonitor { targetRtp: number; toleranceAbs: number; minSamples: number; windows: RtpWindowRow[]; alert: boolean; }
+/** One provably-fair day row for the admin seed panel (J5). Hash is the public commitment. */
+export interface AdminSeedRow { gameDayId: number | null; tradeDate: string; serverSeedHash: string | null; seedVersion: number; revealed: boolean; revealedAtMs: number | null; }
+/** Result of a superadmin-forced seed rotation (J5): the day and its new (bumped) seed version. */
+export interface SeedRotateResult { tradeDate: string; seedVersion: number; }
+
+// ── J6: affiliate payout queue + chat moderation ───────────────────────────────────────────────
+/** A payout request in the admin approve/reject queue (J6). */
+export interface AdminPayoutRow { payoutId: string; affiliateId: string; username: string; phone: string; amountCents: Cents; status: string; approvedBy: string | null; createdAtMs: number; }
+export interface AdminPayoutListQuery extends PageQuery { status?: string | undefined; }
+/** A chat message in the moderation view (J6) — includes hidden rows with their visibility. */
+export interface AdminChatModRow { id: number; userId: string | null; username: string; message: string; isHidden: boolean; createdAtMs: number; }
+
 /** Durable boundary for the admin back office (RPCs + reads / in-memory mirror). */
 export interface AdminRepository {
   overview(): Promise<AdminOverview>;
@@ -70,10 +100,78 @@ export interface AdminRepository {
   depositsReconcile(staleMinutes: number): Promise<AdminDepositsReconcile>;
   reportDaily(range: ReportRange): Promise<DailyReportRow[]>;
   reportByUser(range: ReportRange): Promise<UserReportRow[]>;
+  // J5 — game config + RTP monitor + seed rotation (superadmin mutations guarded in the RPC/mirror)
+  getGameConfig(): Promise<GameConfigRow>;
+  updateGameConfig(actorId: string, actorRole: string, patch: GameConfigPatch): Promise<GameConfigRow>;
+  rtpMonitor(): Promise<RtpMonitor>;
+  listSeeds(limit: number): Promise<AdminSeedRow[]>;
+  rotateSeed(actorId: string, actorRole: string, tradeDate: string): Promise<SeedRotateResult>;
+  // J6 — affiliate payout queue + chat moderation
+  listAffiliatePayouts(q: AdminPayoutListQuery): Promise<Page<AdminPayoutRow>>;
+  listChat(limit: number, includeHidden: boolean): Promise<AdminChatModRow[]>;
+  hideChat(actorId: string, actorRole: string, id: number): Promise<boolean>;
+  unhideChat(actorId: string, actorRole: string, id: number): Promise<boolean>;
+  /** Append an immutable audit row for an admin action whose mutation lives in another service/RPC (J6). */
+  recordAction(actorId: string, actorRole: string, action: string, targetType: string, targetId: string | null, detail: unknown): Promise<void>;
 }
 
 const VALID_STATUS = ["active", "suspended", "banned"];
 const ADMIN_ROLES = ["admin", "superadmin"];
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Rolling windows for the realised-RTP monitor (J5). `days = null` is all-time. */
+const RTP_WINDOWS: ReadonlyArray<{ window: string; days: number | null }> = [
+  { window: "7d", days: 7 }, { window: "30d", days: 30 }, { window: "all", days: null },
+];
+const RTP_TOLERANCE = 0.05;   // absolute realised-vs-target drift that raises an alert
+const RTP_MIN_SAMPLES = 50;   // settled positions a window needs before it can alert (avoid small-N noise)
+
+/** UTC day key offset by `days` from now (e.g. days=6 -> the start day of a 7-day window). */
+function utcDayKeyAgo(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Build one RTP window row; realised RTP is payout/turnover (null when there is no turnover). */
+function rtpWindowRow(window: string, n: number, turnover: number, payout: number): RtpWindowRow {
+  return { window, settledPositions: n, turnoverCents: turnover, payoutCents: payout, realisedRtp: turnover > 0 ? payout / turnover : null };
+}
+
+/** Assemble the monitor + drift alert (alerts only on windows with enough samples). */
+function buildRtpMonitor(targetRtp: number, windows: RtpWindowRow[]): RtpMonitor {
+  const alert = windows.some((w) => w.settledPositions >= RTP_MIN_SAMPLES && w.realisedRtp !== null && Math.abs(w.realisedRtp - targetRtp) > RTP_TOLERANCE);
+  return { targetRtp, toleranceAbs: RTP_TOLERANCE, minSamples: RTP_MIN_SAMPLES, windows, alert };
+}
+
+/** Map a raw game_config row to the public DTO (rtpTarget derived as 1 - house_edge). */
+function mapGameConfigRow(x: any): GameConfigRow {
+  const houseEdge = Number(x.house_edge);
+  return {
+    houseEdge, maxMultiplier: Number(x.max_multiplier), minStakeCents: num(x.min_stake), maxStakeCents: num(x.max_stake),
+    defaultDurationS: Number(x.default_duration_s), tickRateMs: Number(x.tick_rate_ms),
+    driftBias: Number(x.drift_bias), volatility: Number(x.volatility), rtpTarget: 1 - houseEdge,
+    updatedBy: x.updated_by == null ? null : String(x.updated_by), updatedAtMs: ms(x.updated_at),
+  };
+}
+
+/** The default config as a GameConfigRow (in-memory mirror seed). */
+function defaultGameConfigRow(): GameConfigRow {
+  const c = DEFAULT_CONFIG;
+  return {
+    houseEdge: c.houseEdge, maxMultiplier: c.maxMultiplier, minStakeCents: c.minStakeCents, maxStakeCents: c.maxStakeCents,
+    defaultDurationS: c.defaultDurationS, tickRateMs: c.tickRateMs, driftBias: c.driftBias, volatility: c.volatility,
+    rtpTarget: 1 - c.houseEdge, updatedBy: null, updatedAtMs: Date.now(),
+  };
+}
+
+/** Mirror the game_config CHECK constraints; raises INVALID_CONFIG on any violation (J5). */
+function validateGameConfig(c: GameConfigRow): void {
+  const ok = c.houseEdge >= 0 && c.houseEdge < 1 && c.maxMultiplier > 1 && c.minStakeCents > 0
+    && c.maxStakeCents >= c.minStakeCents && c.defaultDurationS > 0 && c.tickRateMs > 0 && c.volatility > 0
+    && Number.isFinite(c.driftBias);
+  if (!ok) throw new Error("INVALID_CONFIG");
+}
 
 const num = (v: unknown): number => (typeof v === "string" ? Number(v) : (v as number)) || 0;
 const ms = (v: unknown): number => (v instanceof Date ? v.getTime() : new Date(String(v)).getTime());
@@ -87,7 +185,7 @@ const inRange = (d: string, r: ReportRange): boolean => (r.from == null || d >= 
 /** Re-raise the bare admin error code the RPCs raise instead of the wrapped pg message. */
 function mapAdminError(e: unknown): never {
   const msg = (e as { message?: string })?.message ?? String(e);
-  const m = msg.match(/(NOT_AUTHORIZED|INVALID_STATUS|NO_SELF_ACTION|USER_NOT_FOUND|INSUFFICIENT_PRIVILEGE|INVALID_RATE|NOT_AFFILIATE|REASON_REQUIRED|INVALID_AMOUNT|INSUFFICIENT_FUNDS|WALLET_NOT_FOUND)/);
+  const m = msg.match(/(NOT_AUTHORIZED|INVALID_STATUS|NO_SELF_ACTION|USER_NOT_FOUND|INSUFFICIENT_PRIVILEGE|INVALID_RATE|NOT_AFFILIATE|REASON_REQUIRED|INVALID_AMOUNT|INSUFFICIENT_FUNDS|WALLET_NOT_FOUND|INVALID_CONFIG|INVALID_DATE|PAST_DATE|SEED_REVEALED|NOT_FOUND)/);
   throw new Error(m ? m[1] : msg);
 }
 
@@ -323,6 +421,120 @@ export class PgAdminRepository implements AdminRepository {
       turnoverCents: num(x.turnover), ggrCents: num(x.ggr),
     }));
   }
+
+  // ── J5: game config + RTP monitor + seed rotation ────────────────────────────────────────────
+
+  async getGameConfig(): Promise<GameConfigRow> {
+    const r = await this.q.query(
+      "select house_edge, max_multiplier, min_stake, max_stake, default_duration_s, tick_rate_ms, drift_bias, volatility, updated_by, updated_at from game_config where id = 1", []);
+    if (!r.rows.length) throw new Error("NOT_FOUND");
+    return mapGameConfigRow(r.rows[0]);
+  }
+
+  async updateGameConfig(actorId: string, actorRole: string, patch: GameConfigPatch): Promise<GameConfigRow> {
+    try {
+      const r = await this.q.query(
+        "select house_edge, max_multiplier, min_stake, max_stake, default_duration_s, tick_rate_ms, drift_bias, volatility, updated_by, updated_at from fn_admin_update_game_config($1,$2,$3::jsonb)",
+        [actorId, actorRole, JSON.stringify(patch)]);
+      return mapGameConfigRow(r.rows[0]);
+    } catch (e) { mapAdminError(e); }
+  }
+
+  async rtpMonitor(): Promise<RtpMonitor> {
+    const cfg = await this.getGameConfig();
+    const r = await this.q.query(
+      `select
+         count(*) filter (where settled_at >= now() - interval '7 days')                 as n7,
+         coalesce(sum(stake)  filter (where settled_at >= now() - interval '7 days'), 0)  as t7,
+         coalesce(sum(payout) filter (where settled_at >= now() - interval '7 days'), 0)  as p7,
+         count(*) filter (where settled_at >= now() - interval '30 days')                as n30,
+         coalesce(sum(stake)  filter (where settled_at >= now() - interval '30 days'), 0) as t30,
+         coalesce(sum(payout) filter (where settled_at >= now() - interval '30 days'), 0) as p30,
+         count(*) as na, coalesce(sum(stake), 0) as ta, coalesce(sum(payout), 0) as pa
+       from positions where status = 'settled'`, []);
+    const x = r.rows[0];
+    const windows = [
+      rtpWindowRow("7d", num(x.n7), num(x.t7), num(x.p7)),
+      rtpWindowRow("30d", num(x.n30), num(x.t30), num(x.p30)),
+      rtpWindowRow("all", num(x.na), num(x.ta), num(x.pa)),
+    ];
+    return buildRtpMonitor(cfg.rtpTarget, windows);
+  }
+
+  async listSeeds(limit: number): Promise<AdminSeedRow[]> {
+    const r = await this.q.query(
+      `select gd.id, gd.trade_date, gd.server_seed_hash, gd.revealed_at, coalesce(so.version, 0) as version
+         from game_days gd left join seed_overrides so on so.trade_date = gd.trade_date
+        order by gd.trade_date desc limit $1`, [clampLimit(limit)]);
+    return r.rows.map((x) => ({
+      gameDayId: x.id == null ? null : Number(x.id), tradeDate: day(x.trade_date),
+      serverSeedHash: x.server_seed_hash == null ? null : String(x.server_seed_hash),
+      seedVersion: num(x.version), revealed: x.revealed_at != null,
+      revealedAtMs: x.revealed_at == null ? null : ms(x.revealed_at),
+    }));
+  }
+
+  async rotateSeed(actorId: string, actorRole: string, tradeDate: string): Promise<SeedRotateResult> {
+    try {
+      const r = await this.q.query("select trade_date, version from fn_admin_rotate_seed($1,$2,$3::date)", [actorId, actorRole, tradeDate]);
+      const x = r.rows[0];
+      return { tradeDate: day(x.trade_date), seedVersion: num(x.version) };
+    } catch (e) { mapAdminError(e); }
+  }
+
+  // ── J6: affiliate payout queue + chat moderation ─────────────────────────────────────────────
+
+  async listAffiliatePayouts(q: AdminPayoutListQuery): Promise<Page<AdminPayoutRow>> {
+    const limit = clampLimit(q.limit);
+    const cur = decodeKeyset(q.cursor);
+    const r = await this.q.query(
+      `select ap.id, ap.affiliate_id, pr.username, pr.phone, ap.amount, ap.status, ap.approved_by, ap.created_at
+         from affiliate_payouts ap join profiles pr on pr.id = ap.affiliate_id
+        where ($1::text is null or ap.status = $1)
+          and ($2::timestamptz is null or (ap.created_at, ap.id) < ($2::timestamptz, $3::uuid))
+        order by ap.created_at desc, ap.id desc limit $4`,
+      [q.status ?? null, cur ? new Date(cur.tsMs).toISOString() : null, cur ? cur.id : null, limit + 1]);
+    const rows: AdminPayoutRow[] = r.rows.map((x) => ({
+      payoutId: String(x.id), affiliateId: String(x.affiliate_id), username: String(x.username), phone: String(x.phone),
+      amountCents: num(x.amount), status: String(x.status), approvedBy: x.approved_by == null ? null : String(x.approved_by), createdAtMs: ms(x.created_at),
+    }));
+    return pageFrom(rows, limit, (p) => `${p.createdAtMs}:${p.payoutId}`);
+  }
+
+  async listChat(limit: number, includeHidden: boolean): Promise<AdminChatModRow[]> {
+    const r = await this.q.query(
+      `select id, user_id, username, message, is_hidden, created_at from chat_messages
+        where ($2::boolean or is_hidden = false)
+        order by created_at desc, id desc limit $1`, [clampLimit(limit), includeHidden]);
+    return r.rows.map((x) => ({
+      id: Number(x.id), userId: x.user_id ?? null, username: String(x.username), message: String(x.message),
+      isHidden: Boolean(x.is_hidden), createdAtMs: ms(x.created_at),
+    }));
+  }
+
+  async hideChat(actorId: string, actorRole: string, id: number): Promise<boolean> {
+    const r = await this.q.query(
+      `with upd as (update chat_messages set is_hidden = true where id = $1 and is_hidden = false returning id),
+            aud as (insert into admin_actions(actor_id, actor_role, action, target_type, target_id, detail)
+                    select $2, $3, 'chat.hide', 'chat', $1::text, '{}'::jsonb from upd)
+       select count(*)::int as n from upd`, [id, actorId, actorRole]);
+    return num(r.rows[0]?.n) > 0;
+  }
+
+  async unhideChat(actorId: string, actorRole: string, id: number): Promise<boolean> {
+    const r = await this.q.query(
+      `with upd as (update chat_messages set is_hidden = false where id = $1 and is_hidden = true returning id),
+            aud as (insert into admin_actions(actor_id, actor_role, action, target_type, target_id, detail)
+                    select $2, $3, 'chat.unhide', 'chat', $1::text, '{}'::jsonb from upd)
+       select count(*)::int as n from upd`, [id, actorId, actorRole]);
+    return num(r.rows[0]?.n) > 0;
+  }
+
+  async recordAction(actorId: string, actorRole: string, action: string, targetType: string, targetId: string | null, detail: unknown): Promise<void> {
+    await this.q.query(
+      "insert into admin_actions(actor_id, actor_role, action, target_type, target_id, detail) values($1,$2,$3,$4,$5,$6::jsonb)",
+      [actorId, actorRole, action, targetType, targetId, JSON.stringify(detail ?? {})]);
+  }
 }
 
 /** Map a raw deposit `transactions` row into the public AdminDepositRow. */
@@ -361,9 +573,12 @@ function memDepositRow(t: { txId: string; userId: string; amountCents: Cents; st
 export class InMemoryAdminRepository implements AdminRepository {
   private readonly audit: MemAudit[] = [];
   private seq = 0;
+  private gameConfig: GameConfigRow = defaultGameConfigRow();
+  private readonly seedRows = new Map<string, AdminSeedRow>();
   constructor(
     private readonly identity: InMemoryIdentityRepository,
     private readonly payments: InMemoryPaymentRepository,
+    private readonly engagement: InMemoryEngagementRepository = new InMemoryEngagementRepository(),
   ) {}
 
   async overview(): Promise<AdminOverview> {
@@ -551,6 +766,96 @@ export class InMemoryAdminRepository implements AdminRepository {
         depositsCents: v.dep, withdrawalsCents: v.wd, turnoverCents: v.turn, ggrCents: v.ggr,
       }))
       .sort((a, b) => (b.ggrCents - a.ggrCents) || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));
+  }
+
+  // ── J5: game config + RTP monitor + seed rotation (mirrors the 0023 RPC guards) ───────────────
+
+  async getGameConfig(): Promise<GameConfigRow> { return { ...this.gameConfig }; }
+
+  async updateGameConfig(actorId: string, actorRole: string, patch: GameConfigPatch): Promise<GameConfigRow> {
+    if (actorRole !== "superadmin") throw new Error("INSUFFICIENT_PRIVILEGE");
+    const before = { ...this.gameConfig };
+    const next: GameConfigRow = { ...this.gameConfig };
+    if (patch.houseEdge !== undefined) next.houseEdge = patch.houseEdge;
+    if (patch.maxMultiplier !== undefined) next.maxMultiplier = patch.maxMultiplier;
+    if (patch.minStakeCents !== undefined) next.minStakeCents = patch.minStakeCents;
+    if (patch.maxStakeCents !== undefined) next.maxStakeCents = patch.maxStakeCents;
+    if (patch.defaultDurationS !== undefined) next.defaultDurationS = patch.defaultDurationS;
+    if (patch.tickRateMs !== undefined) next.tickRateMs = patch.tickRateMs;
+    if (patch.driftBias !== undefined) next.driftBias = patch.driftBias;
+    if (patch.volatility !== undefined) next.volatility = patch.volatility;
+    next.rtpTarget = 1 - next.houseEdge;
+    validateGameConfig(next);
+    next.updatedBy = actorId;
+    next.updatedAtMs = Date.now();
+    this.gameConfig = next;
+    this.record(actorId, actorRole, "game.config", "game_config", "1", { before, after: next, patch });
+    return { ...next };
+  }
+
+  async rtpMonitor(): Promise<RtpMonitor> {
+    const plays = this.identity.adminReportPlays();
+    const agg = (days: number | null): { n: number; t: number; p: number } => {
+      const lo = days == null ? null : utcDayKeyAgo(days - 1);
+      let n = 0, t = 0, p = 0;
+      for (const pl of plays) {
+        if (lo != null && pl.period < lo) continue;
+        n += 1; t += pl.stakeCents; p += pl.payoutCents;
+      }
+      return { n, t, p };
+    };
+    const windows = RTP_WINDOWS.map(({ window, days }) => { const a = agg(days); return rtpWindowRow(window, a.n, a.t, a.p); });
+    return buildRtpMonitor(1 - this.gameConfig.houseEdge, windows);
+  }
+
+  async listSeeds(limit: number): Promise<AdminSeedRow[]> {
+    return [...this.seedRows.values()]
+      .sort((a, b) => (a.tradeDate < b.tradeDate ? 1 : a.tradeDate > b.tradeDate ? -1 : 0))
+      .slice(0, clampLimit(limit));
+  }
+
+  async rotateSeed(actorId: string, actorRole: string, tradeDate: string): Promise<SeedRotateResult> {
+    if (actorRole !== "superadmin") throw new Error("INSUFFICIENT_PRIVILEGE");
+    if (!DATE_KEY_RE.test(tradeDate)) throw new Error("INVALID_DATE");
+    if (tradeDate < new Date().toISOString().slice(0, 10)) throw new Error("PAST_DATE");
+    const existing = this.seedRows.get(tradeDate);
+    if (existing?.revealed) throw new Error("SEED_REVEALED");
+    const seedVersion = (existing?.seedVersion ?? 0) + 1;
+    this.seedRows.set(tradeDate, { gameDayId: existing?.gameDayId ?? null, tradeDate, serverSeedHash: null, seedVersion, revealed: false, revealedAtMs: null });
+    this.record(actorId, actorRole, "game.seed_rotate", "game_day", tradeDate, { version: seedVersion });
+    return { tradeDate, seedVersion };
+  }
+
+  // ── J6: affiliate payout queue + chat moderation ─────────────────────────────────────────────
+
+  async listAffiliatePayouts(q: AdminPayoutListQuery): Promise<Page<AdminPayoutRow>> {
+    const rows = this.identity.adminListPayouts(q.status).map((p) => ({
+      payoutId: p.payoutId, affiliateId: p.affiliateId, username: p.username, phone: p.phone,
+      amountCents: p.amountCents, status: p.status, approvedBy: p.approvedBy, createdAtMs: p.createdAtMs,
+      _ts: p.createdAtMs, _id: p.payoutId,
+    }));
+    return memKeyset(rows, q);
+  }
+
+  async listChat(limit: number, includeHidden: boolean): Promise<AdminChatModRow[]> {
+    const rows = await this.engagement.adminListChat(limit, includeHidden);
+    return rows.map((r) => ({ id: r.id, userId: r.userId, username: r.username, message: r.message, isHidden: r.isHidden, createdAtMs: r.createdAtMs }));
+  }
+
+  async hideChat(actorId: string, actorRole: string, id: number): Promise<boolean> {
+    const ok = await this.engagement.hideChat(id);
+    if (ok) this.record(actorId, actorRole, "chat.hide", "chat", String(id), {});
+    return ok;
+  }
+
+  async unhideChat(actorId: string, actorRole: string, id: number): Promise<boolean> {
+    const ok = await this.engagement.unhideChat(id);
+    if (ok) this.record(actorId, actorRole, "chat.unhide", "chat", String(id), {});
+    return ok;
+  }
+
+  async recordAction(actorId: string, actorRole: string, action: string, targetType: string, targetId: string | null, detail: unknown): Promise<void> {
+    this.record(actorId, actorRole, action, targetType, targetId, detail);
   }
 
   private record(actorId: string, actorRole: string, action: string, targetType: string, targetId: string | null, detail: unknown): void {

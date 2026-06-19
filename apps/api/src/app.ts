@@ -30,7 +30,11 @@ export interface ApiDeps {
     "enroll" | "accrueDaily" | "summary" | "listReferrals" | "listCommissions"
     | "requestPayout" | "approvePayout" | "completePayout" | "rejectPayout">;
   /** Admin back office (J2): dashboard reads, user status, commission rate, withdrawal queue, audit. */
-  admin: Pick<AdminService, "overview" | "listUsers" | "getUserDetail" | "setUserStatus" | "setCommissionRate" | "listWithdrawals" | "listAudit" | "adjustBalance" | "listDeposits" | "depositsReconcile" | "reportDaily" | "reportByUser">;
+  admin: Pick<AdminService,
+    "overview" | "listUsers" | "getUserDetail" | "setUserStatus" | "setCommissionRate" | "listWithdrawals" | "listAudit"
+    | "adjustBalance" | "listDeposits" | "depositsReconcile" | "reportDaily" | "reportByUser"
+    | "getGameConfig" | "updateGameConfig" | "rtpMonitor" | "listSeeds" | "rotateSeed"
+    | "listAffiliatePayouts" | "listChat" | "hideChat" | "unhideChat" | "recordAction">;
   /** Public game configuration snapshot source. */
   config: GameConfig;
   /** Public fairness record for a game-day id (commitment always; seed only after reveal). */

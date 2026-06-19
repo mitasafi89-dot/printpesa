@@ -35,6 +35,23 @@ test("deriveDaySeed: deterministic, equals HMAC-SHA256(master,'day:'+key), disti
   assert.throws(() => deriveDaySeed(master, "bad"), /invalid date key/);
 });
 
+test("deriveDaySeed: forced rotation (version) is backward-compatible and distinct per version (J5)", () => {
+  const master = "master-seed-xyz";
+  const base = deriveDaySeed(master, "2026-06-18");
+  // version 0 is the canonical label -> byte-identical to the unversioned call (every prior commitment stays valid)
+  assert.equal(deriveDaySeed(master, "2026-06-18", 0), base);
+  // each bumped version derives an entirely different, deterministic seed
+  const v1 = deriveDaySeed(master, "2026-06-18", 1);
+  const v2 = deriveDaySeed(master, "2026-06-18", 2);
+  assert.notEqual(v1, base);
+  assert.notEqual(v2, v1);
+  assert.equal(v1, createHmac("sha256", master).update("day:2026-06-18#1").digest("hex"));
+  assert.equal(deriveDaySeed(master, "2026-06-18", 1), v1); // deterministic
+  assert.match(v1, /^[0-9a-f]{64}$/);
+  assert.throws(() => deriveDaySeed(master, "2026-06-18", -1), /invalid seed version/);
+  assert.throws(() => deriveDaySeed(master, "2026-06-18", 1.5), /invalid seed version/);
+});
+
 test("commitment: equals SHA-256(seed) hex — matches DB reveal check encode(digest(seed,'sha256'),'hex')", () => {
   const seed = deriveDaySeed("m", "2026-06-18");
   const c = commitment(seed);

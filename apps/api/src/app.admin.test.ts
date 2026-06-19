@@ -16,8 +16,8 @@ function req(api: TestApi, method: string, path: string, opts: ReqOpts = {}): Pr
   return fetch(`${api.baseUrl}${path}`, init);
 }
 
-async function register(api: TestApi, phone: string, username: string): Promise<string> {
-  const res = await req(api, "POST", "/api/v1/auth/register", { body: { phone, username, password: "Password1" } });
+async function register(api: TestApi, phone: string, username: string, body: Record<string, unknown> = {}): Promise<string> {
+  const res = await req(api, "POST", "/api/v1/auth/register", { body: { phone, username, password: "Password1", ...body } });
   assert.equal(res.status, 201, `register ${username} -> ${res.status}`);
   return (await json(res)).userId as string;
 }
@@ -159,5 +159,131 @@ test("admin reports: per-day & per-user JSON, CSV export, and the date-range fil
     // Malformed date -> 400; player token -> 403.
     assert.equal((await req(api, "GET", "/api/v1/admin/reports/daily?from=2026/06/10", { token: "admin-1:admin" })).status, 400);
     assert.equal((await req(api, "GET", "/api/v1/admin/reports/daily", { token: uid })).status, 403);
+  } finally { await api.close(); }
+});
+
+// ──────────────────────────────────────────────── J5: game config + RTP monitor + seed rotation ──
+
+test("J5 game config: admin reads; only superadmin edits; validates; audited", async () => {
+  const api = await startTestApi();
+  try {
+    const cfg = await json(await req(api, "GET", "/api/v1/admin/game-config", { token: "admin-1:admin" }));
+    assert.equal(cfg.houseEdge, 0.75);
+    assert.equal(cfg.rtpTarget, 0.25);
+
+    // a day-to-day admin cannot edit config (superadmin only)
+    assert.equal((await req(api, "PATCH", "/api/v1/admin/game-config", { token: "admin-1:admin", body: { houseEdge: 0.7 } })).status, 403);
+
+    // superadmin edits a partial patch; rtpTarget is recomputed from house_edge
+    const upd = await req(api, "PATCH", "/api/v1/admin/game-config", { token: "root:superadmin", body: { houseEdge: 0.7, maxStakeCents: 6_000_000 } });
+    assert.equal(upd.status, 200);
+    const u = await json(upd);
+    assert.equal(u.houseEdge, 0.7);
+    assert.ok(Math.abs(u.rtpTarget - 0.3) < 1e-9);
+    assert.equal(u.maxStakeCents, 6_000_000);
+    assert.equal(u.minStakeCents, 5000); // untouched key preserved
+
+    // out-of-range value -> 400; non-integer cents -> 400; empty patch -> 400
+    assert.equal((await req(api, "PATCH", "/api/v1/admin/game-config", { token: "root:superadmin", body: { houseEdge: 1.5 } })).status, 400);
+    assert.equal((await req(api, "PATCH", "/api/v1/admin/game-config", { token: "root:superadmin", body: { minStakeCents: 50.5 } })).status, 400);
+    assert.equal((await req(api, "PATCH", "/api/v1/admin/game-config", { token: "root:superadmin", body: {} })).status, 400);
+
+    const audit = await json(await req(api, "GET", "/api/v1/admin/audit", { token: "root:superadmin" }));
+    assert.ok(audit.items.some((a: any) => a.action === "game.config"));
+  } finally { await api.close(); }
+});
+
+test("J5 RTP monitor: target derived from house_edge, rolling windows, no alert on empty data", async () => {
+  const api = await startTestApi();
+  try {
+    const rtp = await json(await req(api, "GET", "/api/v1/admin/rtp", { token: "admin-1:admin" }));
+    assert.equal(rtp.targetRtp, 0.25);
+    assert.ok(Array.isArray(rtp.windows) && rtp.windows.length === 3);
+    assert.equal(rtp.windows[2].window, "all");
+    assert.equal(rtp.windows[2].realisedRtp, null); // no settled positions yet
+    assert.equal(rtp.alert, false);
+    // player is forbidden
+    const uid = await register(api, "0712220001", "rtp_player");
+    assert.equal((await req(api, "GET", "/api/v1/admin/rtp", { token: uid })).status, 403);
+  } finally { await api.close(); }
+});
+
+test("J5 seed rotation: superadmin-only, future-day-only, bumps version, listed + audited", async () => {
+  const api = await startTestApi();
+  try {
+    // day-to-day admin cannot rotate
+    assert.equal((await req(api, "POST", "/api/v1/admin/seeds/rotate", { token: "admin-1:admin", body: { tradeDate: "2999-01-01" } })).status, 403);
+    // malformed date -> 400; past date -> 409
+    assert.equal((await req(api, "POST", "/api/v1/admin/seeds/rotate", { token: "root:superadmin", body: { tradeDate: "nope" } })).status, 400);
+    assert.equal((await req(api, "POST", "/api/v1/admin/seeds/rotate", { token: "root:superadmin", body: { tradeDate: "2000-01-01" } })).status, 409);
+
+    // future day rotates: version 1 then 2
+    const r1 = await json(await req(api, "POST", "/api/v1/admin/seeds/rotate", { token: "root:superadmin", body: { tradeDate: "2999-01-01" } }));
+    assert.equal(r1.seedVersion, 1);
+    const r2 = await json(await req(api, "POST", "/api/v1/admin/seeds/rotate", { token: "root:superadmin", body: { tradeDate: "2999-01-01" } }));
+    assert.equal(r2.seedVersion, 2);
+
+    const seeds = await json(await req(api, "GET", "/api/v1/admin/seeds", { token: "admin-1:admin" }));
+    assert.ok(seeds.items.some((s: any) => s.tradeDate === "2999-01-01" && s.seedVersion === 2));
+
+    const audit = await json(await req(api, "GET", "/api/v1/admin/audit", { token: "root:superadmin" }));
+    assert.ok(audit.items.some((a: any) => a.action === "game.seed_rotate" && a.targetId === "2999-01-01"));
+  } finally { await api.close(); }
+});
+
+// ──────────────────────────────────────────── J6: affiliate payout queue + chat moderation ──────
+
+test("J6 affiliate payout queue: admin lists requests and approves (audited)", async () => {
+  const api = await startTestApi();
+  try {
+    const affId = await register(api, "0712345678", "marketer");
+    const code: string = (await json(await req(api, "POST", "/api/v1/affiliate/enroll", { token: affId }))).referralCode;
+    const refId = await register(api, "0722333444", "referred", { referral_code: code });
+    api.identity.recordSettledPlay(refId, "2026-06-10", 10000, 2500); // GGR 7500 -> 20% = 1500
+    await req(api, "POST", "/api/v1/admin/affiliate/accrue", { token: `${affId}:admin`, body: { date: "2026-06-10" } });
+    const payout = await json(await req(api, "POST", "/api/v1/affiliate/payouts", { token: `${affId}:marketer` }));
+
+    // queue list, filtered to requested
+    const queue = await json(await req(api, "GET", "/api/v1/admin/affiliate/payouts?status=requested", { token: "admin-1:admin" }));
+    assert.ok(queue.items.some((p: any) => p.payoutId === payout.payoutId && p.amountCents === 1500 && p.username === "marketer"));
+
+    // approve dispatches B2C (stub) and is audited
+    const appr = await req(api, "POST", `/api/v1/admin/affiliate/payouts/${payout.payoutId}/approve`, { token: "admin-9:admin" });
+    assert.equal(appr.status, 200);
+    assert.equal((await json(appr)).approved, true);
+
+    const audit = await json(await req(api, "GET", "/api/v1/admin/audit", { token: "admin-9:admin" }));
+    assert.ok(audit.items.some((a: any) => a.action === "affiliate.payout.approve" && a.targetId === payout.payoutId));
+
+    // a player cannot view the queue
+    const uid = await register(api, "0712220009", "pq_player");
+    assert.equal((await req(api, "GET", "/api/v1/admin/affiliate/payouts", { token: uid })).status, 403);
+  } finally { await api.close(); }
+});
+
+test("J6 chat moderation: list, hide (excluded), includeHidden, unhide, 404 + audit", async () => {
+  const api = await startTestApi();
+  try {
+    const msg = await api.engage.insertChat({ userId: null, username: "ann", message: "gm everyone" });
+
+    // default list shows the visible message
+    let list = await json(await req(api, "GET", "/api/v1/admin/chat", { token: "admin-1:admin" }));
+    assert.ok(list.items.some((m: any) => m.id === msg.id && m.isHidden === false));
+
+    // hide it -> excluded from the default list, present (hidden) with includeHidden
+    assert.equal((await req(api, "POST", `/api/v1/admin/chat/${msg.id}/hide`, { token: "mod-1:admin" })).status, 200);
+    list = await json(await req(api, "GET", "/api/v1/admin/chat", { token: "admin-1:admin" }));
+    assert.ok(!list.items.some((m: any) => m.id === msg.id));
+    const all = await json(await req(api, "GET", "/api/v1/admin/chat?includeHidden=true", { token: "admin-1:admin" }));
+    assert.ok(all.items.some((m: any) => m.id === msg.id && m.isHidden === true));
+
+    // hiding again is a no-op -> 404; unhide restores it
+    assert.equal((await req(api, "POST", `/api/v1/admin/chat/${msg.id}/hide`, { token: "mod-1:admin" })).status, 404);
+    assert.equal((await req(api, "POST", `/api/v1/admin/chat/${msg.id}/unhide`, { token: "mod-1:admin" })).status, 200);
+    assert.equal((await req(api, "POST", "/api/v1/admin/chat/999999/hide", { token: "mod-1:admin" })).status, 404);
+
+    const audit = await json(await req(api, "GET", "/api/v1/admin/audit", { token: "mod-1:admin" }));
+    assert.ok(audit.items.some((a: any) => a.action === "chat.hide"));
+    assert.ok(audit.items.some((a: any) => a.action === "chat.unhide"));
   } finally { await api.close(); }
 });

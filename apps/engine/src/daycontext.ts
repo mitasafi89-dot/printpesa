@@ -14,6 +14,7 @@ export interface DayContext {
   gameDayId: number | null;   // null until the DB row is ensured
   dateKey: string;            // "YYYY-MM-DD" (UTC)
   dayStartMs: number;         // epoch ms of UTC midnight
+  seedVersion: number;        // 0 = base seed; >0 after a superadmin-forced rotation (J5)
   seed: string;               // recomputable day seed (hex) — never persisted as plaintext pre-reveal
   seedHash: string;           // SHA-256(seed) — the public commitment
   curve: CurveGenerator;
@@ -50,21 +51,31 @@ export class SeedManager {
     if (!masterSeed) throw new Error("masterSeed is required");
   }
 
-  /** Pure build (no I/O): derive seed, hash, curve and calibrated settlement for a day. */
-  private build(dateKey: string): DayContext {
-    const seed = deriveDaySeed(this.masterSeed, dateKey);
+  /** Pure build (no I/O): derive seed, hash, curve and calibrated settlement for a day at a seed version. */
+  private build(dateKey: string, seedVersion: number): DayContext {
+    const seed = deriveDaySeed(this.masterSeed, dateKey, seedVersion);
     const seedHash = commitment(seed);
     const curve = new CurveGenerator(seed, this.cfg);
     const settlement = this.opts.calibrationSamples
       ? new SettlementEngine(curve, this.cfg, "calibration", this.cfg.defaultDurationS, 3600, this.opts.calibrationSamples)
       : new SettlementEngine(curve, this.cfg);
-    return { gameDayId: null, dateKey, dayStartMs: dayStartMsForKey(dateKey), seed, seedHash, curve, settlement };
+    return { gameDayId: null, dateKey, dayStartMs: dayStartMsForKey(dateKey), seedVersion, seed, seedHash, curve, settlement };
   }
 
-  /** Get (or build+cache) the context for a date key, ensuring its DB row exists. */
+  /**
+   * Get (or build+cache) the context for a date key, ensuring its DB row commits the matching
+   * seed hash. The active seed version is read from the durable `seed_overrides` (0 if none),
+   * so a superadmin-forced rotation (J5) is honored for any day this process has not yet built
+   * — i.e. future days and, after a restart, the current day. A day already cached/committed is
+   * never silently re-seeded under live positions (the cache is authoritative for this process).
+   */
   async contextFor(dateKey: string): Promise<DayContext> {
     let ctx = this.cache.get(dateKey);
-    if (!ctx) { ctx = this.build(dateKey); this.cache.set(dateKey, ctx); }
+    if (!ctx) {
+      const version = await this.repo.getSeedVersion(dateKey);
+      ctx = this.build(dateKey, version);
+      this.cache.set(dateKey, ctx);
+    }
     if (ctx.gameDayId === null) ctx.gameDayId = await this.repo.ensureGameDay(dateKey, ctx.seedHash);
     return ctx;
   }

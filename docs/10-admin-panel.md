@@ -74,7 +74,22 @@ The REST surface in `apps/api` ships the first admin slice (admin-gated; superad
 | `GET /admin/reports/daily` | 1.6 Reports | **J4** per-day revenue/turnover/deposits/withdrawals (`from`,`to`); `format=csv` exports. |
 | `GET /admin/reports/users` | 1.6 Reports | **J4** per-user revenue/turnover/deposits/withdrawals (`from`,`to`), GGR-ranked; `format=csv` exports. |
 | `GET /admin/audit` | 1.8 Audit log | `admin_actions` trail, newest-first. |
+| `GET /admin/game-config` | 1.4 Game config | **J5** current `game_config` singleton (+ derived `rtpTarget`). |
+| `PATCH /admin/game-config` | 1.4 Game config | **J5** superadmin partial edit; `fn_admin_update_game_config` (0023); range-validated; audited. |
+| `GET /admin/rtp` | 1.4 Game config | **J5** realised RTP vs target over 7d/30d/all-time rolling windows + drift `alert`. |
+| `GET /admin/seeds` | 1.4 Game config | **J5** provably-fair days: commitment hash, seed version, reveal state. |
+| `POST /admin/seeds/rotate` | 1.4 Game config | **J5** superadmin force seed rotation (today-or-future, unrevealed); `fn_admin_rotate_seed` (0023); audited. |
+| `GET /admin/affiliate/payouts` | 1.5 Affiliates | **J6** payout approve/reject **queue** (`status` filter); decisions live at `…/payouts/:id/{approve,reject}` (I4, now audited). |
+| `GET /admin/chat` | 1.6 Engagement | **J6** chat moderation list (`includeHidden`). |
+| `POST /admin/chat/:id/{hide\|unhide}` | 1.6 Engagement | **J6** hide/restore a message; audited. |
 
 Every mutation writes an immutable `admin_actions` row (actor, role, before/after). Still to come:
-game config + RTP monitor + seed rotation (J5), affiliate payout approve/reject UI
-(RPCs already live, I4) + engagement/chat moderation (J6), and bonuses/promos (K1).
+bonuses/promos (K1).
+
+> **J5 game-config / seed-rotation runtime note.** Both the WS engine and the REST API load the
+> game config statically at boot (`DEFAULT_CONFIG`) and the engine derives day seeds from the
+> engine-only `MASTER_SEED`. A config edit / forced rotation is persisted and audited immediately;
+> the engine applies a config change on its next boot and a forced rotation when it next *builds*
+> that day's context (future days, or the current day after a restart) — it never re-seeds a day
+> already live under open positions. A future hardening task can add a live config/seed reload
+> signal to the engine.
