@@ -13,6 +13,11 @@ const MESSAGES: Record<string, string> = {
   ACCOUNT_SUSPENDED: 'This account is suspended. Contact support.',
   ACCOUNT_BANNED: 'This account is banned.',
   VALIDATION: 'Please check your details and try again.',
+  AGE_NOT_VERIFIED: 'Verify your age first — add your name & date of birth in Account.',
+  INSUFFICIENT_FUNDS: 'Insufficient balance for this amount.',
+  INVALID_AMOUNT: 'Enter a valid amount.',
+  BELOW_MIN: 'Amount is below the minimum.',
+  INVALID_PHONE: 'Enter a valid Kenyan phone number.',
 };
 
 /** Map any thrown error to a friendly, action-oriented message. */

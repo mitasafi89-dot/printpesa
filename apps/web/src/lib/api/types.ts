@@ -50,3 +50,39 @@ export interface PositionDto {
   payoutCents: Cents | null;
   pnlCents: Cents | null;
 }
+
+/** GET /wallet/ledger item (signed amountCents; newest-first). */
+export interface LedgerEntryDto {
+  id: number;
+  type: string;
+  amountCents: Cents;
+  balanceKind: string;
+  refTable: string | null;
+  refId: string | null;
+  meta: unknown;
+  ts: number;
+}
+
+export type TransactionKind = 'deposit' | 'withdrawal';
+
+/** GET /transactions item. */
+export interface TransactionDto {
+  id: string;
+  kind: TransactionKind;
+  amountCents: Cents;
+  status: string;
+  provider: string | null;
+  phone: string | null;
+  mpesaReceipt: string | null;
+  ts: number;
+}
+
+export interface DepositResult {
+  transactionId: string;
+  checkoutRequestId: string;
+}
+
+export interface WithdrawalResult {
+  transactionId: string;
+  newBalance: Cents;
+}

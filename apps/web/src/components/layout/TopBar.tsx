@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { AuthButtons } from '@/components/auth/AuthButtons';
+import { BalancePill } from '@/components/wallet/BalancePill';
 
 export function TopBar() {
   return (
@@ -17,6 +18,7 @@ export function TopBar() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <BalancePill />
           <ThemeToggle />
           <AuthButtons />
         </div>
