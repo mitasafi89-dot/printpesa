@@ -53,6 +53,33 @@ export const ROLE_RANK: Readonly<Record<string, number>> = {
 
 const MAX_BODY_BYTES = 1_000_000; // 1 MB cap on request bodies
 
+/**
+ * CORS. The player web app is served from a different origin (e.g. the Vercel/web domain)
+ * than this API, so every browser request is preceded by a CORS preflight. Without these
+ * headers the browser blocks the response and EVERY call (register/login/wallet/...) fails
+ * silently in the UI while curl and the test suite still pass. Allowed origins come from
+ * `CORS_ALLOWED_ORIGINS` (comma-separated); default `*`. Auth is via a Bearer token (not
+ * cookies), so `*` is safe; set explicit origins in production for defence-in-depth.
+ */
+const CORS_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? "*")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const CORS_ALLOW_ALL = CORS_ORIGINS.includes("*");
+
+function applyCors(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers["origin"];
+  if (typeof origin === "string" && (CORS_ALLOW_ALL || CORS_ORIGINS.includes(origin))) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  } else if (CORS_ALLOW_ALL) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,X-User-Id,X-User-Role");
+  res.setHeader("Access-Control-Max-Age", "86400");
+}
+
 function compile(path: string): { regex: RegExp; keys: string[] } {
   const keys: string[] = [];
   const pattern = path
@@ -89,6 +116,13 @@ export class Router {
     const method = (req.method ?? "GET").toUpperCase();
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
+    applyCors(req, res);
+    // Answer the CORS preflight before any routing/auth so browser write calls succeed.
+    if (method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
     try {
       let matchedPath = false;
       for (const route of this.routes) {

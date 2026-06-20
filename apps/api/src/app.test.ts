@@ -132,3 +132,35 @@ test("wrong method on existing path → 405", async () => {
     assert.equal(body.error.code, "METHOD_NOT_ALLOWED");
   } finally { await api.close(); }
 });
+
+test("OPTIONS preflight → 204 with CORS headers (browser write calls succeed)", async () => {
+  const api = await startTestApi();
+  try {
+    const res = await fetch(`${api.baseUrl}/api/v1/auth/register`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://app.printpesa.example",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type, authorization",
+      },
+    });
+    assert.equal(res.status, 204);
+    // Default allowlist is "*": the request Origin is echoed back so the browser proceeds.
+    assert.equal(res.headers.get("access-control-allow-origin"), "https://app.printpesa.example");
+    const allowMethods = res.headers.get("access-control-allow-methods") ?? "";
+    assert.ok(allowMethods.includes("POST"), "POST must be allowed");
+    const allowHeaders = (res.headers.get("access-control-allow-headers") ?? "").toLowerCase();
+    assert.ok(allowHeaders.includes("authorization") && allowHeaders.includes("content-type"));
+  } finally { await api.close(); }
+});
+
+test("actual POST carries CORS header so the browser exposes the response", async () => {
+  const api = await startTestApi();
+  try {
+    const res = await fetch(`${api.baseUrl}/api/v1/health`, {
+      headers: { Origin: "https://app.printpesa.example" },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("access-control-allow-origin"), "https://app.printpesa.example");
+  } finally { await api.close(); }
+});
