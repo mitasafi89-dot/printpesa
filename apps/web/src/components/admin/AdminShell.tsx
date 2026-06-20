@@ -24,6 +24,7 @@ function Icon({ d }: { d: string }) {
 // Nav grows as each admin feature ships (one entry per built route).
 const NAV: NavItem[] = [
   { href: '/admin', label: 'Overview', icon: <Icon d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z" /> },
+  { href: '/admin/withdrawals', label: 'Withdrawals', icon: <Icon d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /> },
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {

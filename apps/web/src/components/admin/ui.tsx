@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { Money } from '@/components/ui/Money';
 
 export function PageHeader({
@@ -117,5 +118,57 @@ export function Empty({ title, description }: { title: string; description?: str
       <p className="text-sm font-medium text-fg">{title}</p>
       {description ? <p className="text-sm text-muted">{description}</p> : null}
     </div>
+  );
+}
+
+/** Two-step inline confirm for irreversible/visible actions (approve/reject, etc.). */
+export function ConfirmButton({
+  label,
+  confirmLabel,
+  onConfirm,
+  variant = 'primary',
+  size = 'sm',
+  busy,
+  disabled,
+}: {
+  label: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+  variant?: React.ComponentProps<typeof Button>['variant'];
+  size?: React.ComponentProps<typeof Button>['size'];
+  busy?: boolean;
+  disabled?: boolean;
+}) {
+  const [armed, setArmed] = React.useState(false);
+  React.useEffect(() => {
+    if (!armed) return;
+    const id = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(id);
+  }, [armed]);
+
+  if (armed) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <Button
+          size={size}
+          variant={variant}
+          disabled={busy}
+          onClick={() => {
+            setArmed(false);
+            onConfirm();
+          }}
+        >
+          {busy ? '…' : confirmLabel ?? `Confirm ${label.toLowerCase()}`}
+        </Button>
+        <Button size={size} variant="ghost" onClick={() => setArmed(false)} disabled={busy}>
+          Cancel
+        </Button>
+      </span>
+    );
+  }
+  return (
+    <Button size={size} variant={variant} onClick={() => setArmed(true)} disabled={disabled || busy}>
+      {label}
+    </Button>
   );
 }
