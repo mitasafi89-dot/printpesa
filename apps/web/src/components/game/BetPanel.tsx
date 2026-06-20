@@ -48,9 +48,9 @@ export function BetPanel() {
   const [armed, setArmed] = useState<Direction | null>(null);
   const [justFunded, setJustFunded] = useState(false);
 
-  // Seed the stake field with the minimum once config arrives.
+  // Seed the stake with a sensible default (KES 200) once config arrives, never below the minimum.
   useEffect(() => {
-    if (stake === '') setStake(String(centsToKes(minStakeCents)));
+    if (stake === '') setStake(String(centsToKes(Math.max(minStakeCents, 20000))));
   }, [minStakeCents, stake]);
   useEffect(() => {
     if (config) setDurationS((d) => (d === 10 && defaultDurationS !== 10 ? defaultDurationS : d));

@@ -109,12 +109,6 @@ export function DepositModal() {
             </div>
           ) : null}
 
-          {pending && prefillAmountCents ? (
-            <p className="rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-fg">
-              Add money to place your {formatKes(prefillAmountCents)} {intentLabel} trade. You can change the amount below.
-            </p>
-          ) : null}
-
           {/* Quick amounts */}
           <div className="flex gap-2 overflow-x-auto pb-0.5">
             {QUICK_KES.map((q) => {
