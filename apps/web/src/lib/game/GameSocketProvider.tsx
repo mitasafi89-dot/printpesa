@@ -108,8 +108,6 @@ function errorTitle(code: string): string {
       return 'Log in to trade';
     case 'AUTH_INVALID':
       return 'Session expired — log in again';
-    case 'AGE_NOT_VERIFIED':
-      return 'Verify your age to trade';
     case 'INSUFFICIENT_FUNDS':
       return 'Insufficient balance';
     default:

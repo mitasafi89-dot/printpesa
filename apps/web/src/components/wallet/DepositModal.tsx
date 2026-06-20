@@ -1,18 +1,15 @@
  'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import { kesToCents } from '@printpesa/shared/money';
 import { normalizeMsisdn } from '@printpesa/shared/payments';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { useSession } from '@/lib/auth/session';
 import { useDeposit } from '@/lib/wallet/hooks';
 import { authErrorMessage } from '@/lib/auth/errors';
 
 export function DepositModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const user = useSession((s) => s.user);
   const deposit = useDeposit();
   const [amount, setAmount] = useState('');
   const [phone, setPhone] = useState('');
@@ -21,22 +18,6 @@ export function DepositModal({ open, onClose }: { open: boolean; onClose: () => 
   const [done, setDone] = useState(false);
 
   if (!open) return null;
-
-  if (user && !user.ageVerified) {
-    return (
-      <Modal open={open} onClose={onClose} title="Verify your age">
-        <Header title="Verify your age" onClose={onClose} />
-        <div className="flex flex-col gap-3 p-4">
-          <p className="text-sm text-muted">
-            Deposits require age verification (18+). Add your name and date of birth to continue.
-          </p>
-          <Link href="/account" onClick={onClose}>
-            <Button fullWidth>Go to Account</Button>
-          </Link>
-        </div>
-      </Modal>
-    );
-  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();

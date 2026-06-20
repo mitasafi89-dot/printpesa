@@ -24,7 +24,7 @@ export interface ApiDeps {
   /** JWT verifier for player/admin routes; null → DEV header auth (see requireAuth). */
   verifier: Verifier | null;
   /** Self-managed phone+password auth + basic-KYC profile (G3/G4/H1). */
-  auth: Pick<AuthService, "register" | "login" | "me" | "completeBasicProfile">;
+  auth: Pick<AuthService, "register" | "login" | "me">;
   /** Marketer enrollment, commission accrual, dashboard reads (I1/I2/I3) + payouts (I4). */
   affiliate: Pick<AffiliateService,
     "enroll" | "accrueDaily" | "summary" | "listReferrals" | "listCommissions"

@@ -16,10 +16,6 @@ export interface MeDto {
   userId: string;
   role: AuthResult['role'];
   username: string;
-  fullName: string | null;
-  dateOfBirth: string | null;
-  kycStatus: 'none' | 'basic' | 'full' | 'rejected';
-  ageVerified: boolean;
 }
 
 export interface WalletDto {

@@ -99,49 +99,14 @@ test("GET /auth/me → 401 without token, identity echo with token", async () =>
 });
 
 // ────────────────────────────────── basic KYC / profile (H1) ────────────────────────────────
-const ADULT_DOB = "2000-01-01";
-
-test("GET /auth/me returns profile+kyc; PATCH /auth/me completes basic KYC and reflects in GET", async () => {
+test("GET /auth/me → returns the registered identity (no KYC fields)", async () => {
   const api = await startTestApi();
   try {
     const reg = await json(await req(api, "POST", "/api/v1/auth/register", { body: REG }));
-    let me = await json(await req(api, "GET", "/api/v1/auth/me", { token: reg.userId }));
+    const me = await json(await req(api, "GET", "/api/v1/auth/me", { token: reg.userId }));
     assert.equal(me.username, "alice");
-    assert.equal(me.kycStatus, "none");
-    assert.equal(me.ageVerified, false);
-
-    const patched = await req(api, "PATCH", "/api/v1/auth/me", { token: reg.userId, body: { full_name: "Alice A.", date_of_birth: ADULT_DOB } });
-    assert.equal(patched.status, 200);
-    const pb = await json(patched);
-    assert.equal(pb.kycStatus, "basic");
-    assert.equal(pb.ageVerified, true);
-    assert.equal(pb.fullName, "Alice A.");
-
-    me = await json(await req(api, "GET", "/api/v1/auth/me", { token: reg.userId }));
-    assert.equal(me.ageVerified, true);
-    assert.equal(me.dateOfBirth, ADULT_DOB);
-  } finally { await api.close(); }
-});
-
-test("PATCH /auth/me → 403 underage, 409 DOB-immutable, 400 missing field, 401 no token", async () => {
-  const api = await startTestApi();
-  try {
-    const reg = await json(await req(api, "POST", "/api/v1/auth/register", { body: REG }));
-
-    const minor = await req(api, "PATCH", "/api/v1/auth/me", { token: reg.userId, body: { full_name: "Kid", date_of_birth: "2020-01-01" } });
-    assert.equal(minor.status, 403);
-    assert.equal((await json(minor)).error.code, "AGE_RESTRICTED");
-
-    const missing = await req(api, "PATCH", "/api/v1/auth/me", { token: reg.userId, body: { full_name: "Alice A." } });
-    assert.equal(missing.status, 400);
-    assert.equal((await json(missing)).error.code, "VALIDATION");
-
-    await req(api, "PATCH", "/api/v1/auth/me", { token: reg.userId, body: { full_name: "Alice A.", date_of_birth: ADULT_DOB } });
-    const changed = await req(api, "PATCH", "/api/v1/auth/me", { token: reg.userId, body: { full_name: "Alice A.", date_of_birth: "1990-01-01" } });
-    assert.equal(changed.status, 409);
-    assert.equal((await json(changed)).error.code, "DOB_IMMUTABLE");
-
-    const anon = await fetch(`${api.baseUrl}/api/v1/auth/me`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ full_name: "X", date_of_birth: ADULT_DOB }) });
-    assert.equal(anon.status, 401);
+    assert.equal(me.role, "player");
+    assert.equal(me.kycStatus, undefined);
+    assert.equal(me.ageVerified, undefined);
   } finally { await api.close(); }
 });

@@ -1,7 +1,7 @@
 import { randomBytes, scrypt as _scrypt, timingSafeEqual, type ScryptOptions } from "node:crypto";
 import { SignJWT } from "jose";
-import { validatePassword, validateUsername, validateFullName, validateDateOfBirth, validateReferralCode, ageInYears, MIN_AGE_YEARS, normalizeMsisdn } from "@printpesa/shared";
-import type { IdentityRepository, ProfileRow } from "./identity.js";
+import { validatePassword, validateUsername, validateReferralCode, normalizeMsisdn } from "@printpesa/shared";
+import type { IdentityRepository } from "./identity.js";
 
 /**
  * AuthService — self-managed phone + password authentication (no OTP, no Supabase Auth).
@@ -54,10 +54,9 @@ export async function verifyPassword(password: string, stored: string): Promise<
 /** A successful authentication: a signed token plus the verified identity. */
 export interface AuthSession { token: string; userId: string; role: string; }
 
-/** Profile + KYC view returned by `/me` (ageVerified is computed from dateOfBirth at read time). */
+/** Profile view returned by `/me`. */
 export interface Profile {
   userId: string; username: string; role: string; status: string;
-  fullName: string | null; dateOfBirth: string | null; kycStatus: string; ageVerified: boolean;
 }
 
 export interface AuthServiceOptions {
@@ -135,26 +134,10 @@ export class AuthService {
     return { token, userId: rec.userId, role: rec.role };
   }
 
-  /** Read the caller's profile + KYC state. Throws NOT_FOUND if no such identity. */
+  /** Read the caller's profile. Throws NOT_FOUND if no such identity. */
   async me(userId: string): Promise<Profile> {
     const p = await this.repo.getProfile(userId);
     if (!p) throw new Error("NOT_FOUND");
-    return toProfileView(p);
+    return p;
   }
-
-  /** Complete basic KYC: validate name + adulthood, persist (DOB immutable once set), return the profile. */
-  async completeBasicProfile(userId: string, input: { fullName: string; dateOfBirth: string }): Promise<Profile> {
-    const name = validateFullName(input.fullName);
-    if (!name.ok) throw new Error(`NAME_${name.reason}`);
-    const dob = validateDateOfBirth(input.dateOfBirth);
-    if (!dob.ok) throw new Error(dob.reason === "UNDERAGE" ? "AGE_RESTRICTED" : `DOB_${dob.reason}`);
-    const p = await this.repo.setBasicProfile(userId, input.fullName, input.dateOfBirth);
-    return toProfileView(p);
-  }
-}
-
-/** Project a stored profile row to the `/me` view, computing ageVerified from the DOB. */
-function toProfileView(p: ProfileRow): Profile {
-  const ageVerified = p.dateOfBirth != null && ageInYears(p.dateOfBirth) >= MIN_AGE_YEARS;
-  return { ...p, ageVerified };
 }

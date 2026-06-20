@@ -1,8 +1,6 @@
 import {
   validatePassword,
   validateUsername,
-  validateFullName,
-  validateDateOfBirth,
   validateReferralCode,
 } from '@printpesa/shared/credentials';
 import { normalizeMsisdn } from '@printpesa/shared/payments';
@@ -55,36 +53,4 @@ export function referralError(v: string): string | undefined {
   const r = validateReferralCode(v);
   if (r.ok) return undefined;
   return 'Referral code looks wrong — it is 8 characters.';
-}
-
-export function fullNameError(v: string): string | undefined {
-  const r = validateFullName(v);
-  if (r.ok) return undefined;
-  return pick(
-    {
-      TOO_SHORT: 'Enter your full name.',
-      TOO_LONG: 'Name is too long.',
-      INVALID_CHARS: 'Use letters and basic punctuation only.',
-      NEEDS_LETTER: 'Enter your full name.',
-    },
-    r.reason,
-    'Enter a valid name.',
-  );
-}
-
-export function dobError(v: string): string | undefined {
-  if (!v) return 'Date of birth is required.';
-  const r = validateDateOfBirth(v);
-  if (r.ok) return undefined;
-  return pick(
-    {
-      UNDERAGE: 'You must be 18 or older.',
-      FUTURE: 'Date cannot be in the future.',
-      INVALID_FORMAT: 'Enter a valid date.',
-      INVALID_DATE: 'Enter a valid date.',
-      IMPLAUSIBLE: 'Enter a valid date.',
-    },
-    r.reason,
-    'Enter a valid date.',
-  );
 }

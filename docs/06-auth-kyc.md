@@ -1,5 +1,10 @@
 # 06 — Authentication & KYC
 
+> **Update (migration 0018):** Age verification and basic KYC (full name + date of birth)
+> have been **removed**. There is no age-gate, no `kyc_status`, and no `PATCH /auth/me`
+> profile completion. Registration alone (phone + username + password) grants full access to
+> deposit and play. The DOB/name sections below are retained only as historical context.
+
 ## 1. Method: Phone + password (MVP, implemented)
 Phone is the login identity (the audience is Kenyan and M-Pesa is phone-anchored). Auth is
 **self-managed** — no OTP and no Supabase Auth/GoTrue. `profiles.id` is decoupled from

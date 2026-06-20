@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { centsToKes, formatKes, kesToCents } from '@printpesa/shared/money';
 import type { Direction } from '@printpesa/shared';
@@ -26,9 +25,7 @@ const CONFIRM_CENTS = 50000;
 export function BetPanel() {
   const hydrated = useHydrated();
   const token = useSession((s) => s.token);
-  const user = useSession((s) => s.user);
   const openAuth = useAuthUi((s) => s.openAuth);
-  const router = useRouter();
 
   const { data: config } = useQuery({
     queryKey: ['gameConfig'],
@@ -97,10 +94,6 @@ export function BetPanel() {
       openAuth('login');
       return;
     }
-    if (user && !user.ageVerified) {
-      router.push('/account');
-      return;
-    }
     if (!validStake || overMax || overBalance) return;
     if (stakeCents >= CONFIRM_CENTS && armed !== dir) {
       setArmed(dir);
@@ -141,8 +134,6 @@ export function BetPanel() {
       </Card>
     );
   }
-
-  const ageBlocked = !!token && !!user && !user.ageVerified;
 
   // ── Idle — stake + duration + BUY/SELL (always visible) ─────────────────────
   return (
@@ -214,8 +205,6 @@ export function BetPanel() {
 
       {armed ? (
         <p className="text-center text-[11px] text-muted">Tap again to confirm your stake.</p>
-      ) : ageBlocked ? (
-        <p className="text-center text-[11px] text-warn">Verify your age (18+) in Profile to trade.</p>
       ) : !token ? (
         <p className="text-center text-[11px] text-muted">You&apos;ll be asked to log in to place a trade.</p>
       ) : null}

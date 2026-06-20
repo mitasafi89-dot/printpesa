@@ -1,6 +1,6 @@
 'use client';
 
-import { api, type ProfileInput, type RegisterInput } from '@/lib/api/endpoints';
+import { api, type RegisterInput } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
 import { useSession } from '@/lib/auth/session';
 
@@ -23,13 +23,6 @@ export function useAuthActions() {
     return res;
   }
 
-  async function updateProfile(token: string, body: ProfileInput) {
-    await api.updateProfile(token, body);
-    const me = await api.me(token);
-    setUser(me);
-    return me;
-  }
-
   async function refresh(token: string) {
     try {
       setUser(await api.me(token));
@@ -42,5 +35,5 @@ export function useAuthActions() {
     reset();
   }
 
-  return { login, register, updateProfile, refresh, logout };
+  return { login, register, refresh, logout };
 }

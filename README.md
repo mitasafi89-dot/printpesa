@@ -45,7 +45,7 @@ administrative back office.
 | Chart timeframes | 30s · 1m · 2m · 5m | Visualization only |
 | Affiliate commission | 20% | Revenue-share on referred net losses |
 | Auth | Phone + OTP | Email optional |
-| KYC (MVP) | Basic | Phone verified + name + DOB age-gate |
+| KYC (MVP) | None | Age verification & basic KYC removed (see migration 0018) |
 
 ---
 

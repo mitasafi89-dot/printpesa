@@ -6,10 +6,9 @@ import { type Page, type PageQuery, clampLimit, decodeKeyset, pageFrom } from ".
 /**
  * IdentityRepository: durable boundary for self-managed phone + password identity and the
  * basic-KYC profile. `register` maps to the 0015 `fn_register_user` RPC; `findByPhone` loads
- * the credential for login; `getProfile` reads the profile/KYC state; `setBasicProfile` maps
- * to the 0016 `fn_set_basic_profile` RPC (validates adulthood, DOB immutable once set). The
- * in-memory implementation mirrors the same contracts for tests; both are driven the same way
- * by AuthService. Phones passed in are already normalized MSISDN; dates are ISO `YYYY-MM-DD`.
+ * the credential for login; `getProfile` reads the profile state. The in-memory implementation
+ * mirrors the same contracts for tests; both are driven the same way by AuthService. Phones
+ * passed in are already normalized MSISDN. (Age verification / basic KYC removed in 0018.)
  */
 
 /** A newly registered identity. */
@@ -18,10 +17,9 @@ export interface RegisteredUser { userId: string; role: string; }
 /** Stored credential + account state for a login attempt. */
 export interface CredentialRecord { userId: string; role: string; status: string; passwordHash: string; }
 
-/** Profile + KYC state (date of birth as ISO `YYYY-MM-DD`, or null until basic KYC). */
+/** Profile state for the `/me` view. */
 export interface ProfileRow {
   userId: string; username: string; role: string; status: string;
-  fullName: string | null; dateOfBirth: string | null; kycStatus: string;
 }
 
 /** An affiliate (marketer) enrollment: the stable referral code + commission terms + current role. */
@@ -54,7 +52,6 @@ export interface PayoutCompleteResult { applied: boolean; status: string; }
 /** A user as the admin back office sees it (J2). */
 export interface AdminUserSnapshot {
   userId: string; username: string; phone: string; role: string; status: string;
-  fullName: string | null; dateOfBirth: string | null; kycStatus: string;
   referredBy: string | null; createdAtMs: number;
 }
 /** An affiliate's commission terms for admin reads/mutations (J2). */
@@ -78,10 +75,8 @@ export interface IdentityRepository {
   register(phone: string, username: string, passwordHash: string, referralCode?: string): Promise<RegisteredUser>;
   /** Load credential + account state by (normalized) phone, or null if no such account. */
   findByPhone(phone: string): Promise<CredentialRecord | null>;
-  /** Load the full profile + KYC state by user id, or null if not found. */
+  /** Load the profile by user id, or null if not found. */
   getProfile(userId: string): Promise<ProfileRow | null>;
-  /** Set basic KYC (name + DOB). Throws INVALID_NAME / INVALID_DOB / AGE_RESTRICTED / DOB_IMMUTABLE / USER_NOT_FOUND. */
-  setBasicProfile(userId: string, fullName: string, dateOfBirth: string): Promise<ProfileRow>;
 }
 
 /**
@@ -119,7 +114,7 @@ export interface AffiliateRepository {
 /** Re-raise the bare error code the RPCs raise instead of the wrapped pg message. */
 function mapPgError(e: unknown): never {
   const msg = (e as { message?: string })?.message ?? String(e);
-  const m = msg.match(/(INVALID_PHONE|INVALID_USERNAME|INVALID_HASH|PHONE_TAKEN|USERNAME_TAKEN|REGISTRATION_CONFLICT|INVALID_NAME|INVALID_DOB|AGE_RESTRICTED|DOB_IMMUTABLE|USER_NOT_FOUND|NO_AVAILABLE_COMMISSION|PAYOUT_PENDING|PAYOUT_NOT_FOUND)/);
+  const m = msg.match(/(INVALID_PHONE|INVALID_USERNAME|INVALID_HASH|PHONE_TAKEN|USERNAME_TAKEN|REGISTRATION_CONFLICT|USER_NOT_FOUND|NO_AVAILABLE_COMMISSION|PAYOUT_PENDING|PAYOUT_NOT_FOUND)/);
   throw new Error(m ? m[1] : msg);
 }
 
@@ -270,31 +265,20 @@ export class PgIdentityRepository implements IdentityRepository, AffiliateReposi
   }
   async getProfile(userId: string): Promise<ProfileRow | null> {
     const r = await this.q.query(
-      "select id, username, role, status, full_name, date_of_birth, kyc_status from profiles where id = $1", [userId]);
+      "select id, username, role, status from profiles where id = $1", [userId]);
     if (!r.rows.length) return null;
     return this.rowToProfile(r.rows[0]);
-  }
-  async setBasicProfile(userId: string, fullName: string, dateOfBirth: string): Promise<ProfileRow> {
-    try {
-      await this.q.query("select user_id from fn_set_basic_profile($1,$2,$3)", [userId, fullName, dateOfBirth]);
-    } catch (e) { mapPgError(e); }
-    const p = await this.getProfile(userId);
-    if (!p) throw new Error("USER_NOT_FOUND");
-    return p;
   }
   private rowToProfile(x: Record<string, unknown>): ProfileRow {
     return {
       userId: String(x.id), username: String(x.username), role: String(x.role), status: String(x.status),
-      fullName: x.full_name == null ? null : String(x.full_name),
-      dateOfBirth: toIsoDate(x.date_of_birth), kycStatus: String(x.kyc_status),
     };
   }
 }
 
 interface MemUser {
   userId: string; phone: string; username: string; role: string; status: string;
-  passwordHash: string; fullName: string | null; dateOfBirth: string | null; kycStatus: string;
-  referredBy: string | null; createdAtMs: number;
+  passwordHash: string; referredBy: string | null; createdAtMs: number;
 }
 
 interface MemAffiliate { userId: string; referralCode: string; commissionRate: number; status: string; }
@@ -323,7 +307,7 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
     if (this.usernames.has(username)) throw new Error("USERNAME_TAKEN");
     const u: MemUser = {
       userId: randomUUID(), phone, username, role: "player", status: "active",
-      passwordHash, fullName: null, dateOfBirth: null, kycStatus: "none", referredBy: null, createdAtMs: Date.now(),
+      passwordHash, referredBy: null, createdAtMs: Date.now(),
     };
     this.byPhone.set(phone, u); this.byId.set(u.userId, u); this.usernames.add(username);
     // First-touch, permanent attribution: an unknown/suspended code is silently ignored.
@@ -344,15 +328,6 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
   async getProfile(userId: string): Promise<ProfileRow | null> {
     const u = this.byId.get(userId);
     return u ? this.toProfile(u) : null;
-  }
-  async setBasicProfile(userId: string, fullName: string, dateOfBirth: string): Promise<ProfileRow> {
-    const u = this.byId.get(userId);
-    if (!u) throw new Error("USER_NOT_FOUND");
-    if (u.dateOfBirth != null && u.dateOfBirth !== dateOfBirth) throw new Error("DOB_IMMUTABLE");
-    u.dateOfBirth = u.dateOfBirth ?? dateOfBirth;
-    u.fullName = fullName;
-    u.kycStatus = "basic";
-    return this.toProfile(u);
   }
   async enrollAffiliate(userId: string): Promise<AffiliateView> {
     const u = this.byId.get(userId);
@@ -485,7 +460,6 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
   private toProfile(u: MemUser): ProfileRow {
     return {
       userId: u.userId, username: u.username, role: u.role, status: u.status,
-      fullName: u.fullName, dateOfBirth: u.dateOfBirth, kycStatus: u.kycStatus,
     };
   }
   /** Test seam: flip an account's status (active | suspended | banned). */
@@ -575,7 +549,6 @@ export class InMemoryIdentityRepository implements IdentityRepository, Affiliate
   private toAdminUser(u: MemUser): AdminUserSnapshot {
     return {
       userId: u.userId, username: u.username, phone: u.phone, role: u.role, status: u.status,
-      fullName: u.fullName, dateOfBirth: u.dateOfBirth, kycStatus: u.kycStatus,
       referredBy: u.referredBy, createdAtMs: u.createdAtMs,
     };
   }

@@ -82,30 +82,13 @@ test("AuthService requires a jwt secret", () => {
 });
 
 // ── basic-KYC profile (H1) ─────────────────────────────────────────────────────────────────
-test("me reflects profile + computed ageVerified before and after basic KYC", async () => {
+test("me reflects the registered profile", async () => {
   const { auth } = svc();
   const reg = await auth.register({ phone: "0712345678", username: "alice", password: "Password1" });
-  let me = await auth.me(reg.userId);
+  const me = await auth.me(reg.userId);
   assert.equal(me.username, "alice");
-  assert.equal(me.kycStatus, "none");
-  assert.equal(me.ageVerified, false);
-  assert.equal(me.dateOfBirth, null);
-  await auth.completeBasicProfile(reg.userId, { fullName: "Alice A.", dateOfBirth: "2000-01-01" });
-  me = await auth.me(reg.userId);
-  assert.equal(me.kycStatus, "basic");
-  assert.equal(me.ageVerified, true);
-  assert.equal(me.fullName, "Alice A.");
-  assert.equal(me.dateOfBirth, "2000-01-01");
-});
-
-test("completeBasicProfile rejects underage / bad name / bad date, and DOB is immutable", async () => {
-  const { auth } = svc();
-  const reg = await auth.register({ phone: "0712345678", username: "alice", password: "Password1" });
-  await assert.rejects(() => auth.completeBasicProfile(reg.userId, { fullName: "Alice A.", dateOfBirth: "2020-01-01" }), /AGE_RESTRICTED/);
-  await assert.rejects(() => auth.completeBasicProfile(reg.userId, { fullName: "A", dateOfBirth: "2000-01-01" }), /NAME_TOO_SHORT/);
-  await assert.rejects(() => auth.completeBasicProfile(reg.userId, { fullName: "Alice A.", dateOfBirth: "nope" }), /DOB_INVALID_FORMAT/);
-  await auth.completeBasicProfile(reg.userId, { fullName: "Alice A.", dateOfBirth: "2000-01-01" });
-  await assert.rejects(() => auth.completeBasicProfile(reg.userId, { fullName: "Alice A.", dateOfBirth: "1990-01-01" }), /DOB_IMMUTABLE/);
+  assert.equal(me.role, "player");
+  assert.equal(me.status, "active");
 });
 
 test("me throws NOT_FOUND for an unknown user", async () => {

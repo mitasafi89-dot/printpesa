@@ -301,7 +301,7 @@ export function AuthModal() {
           <span className="text-muted">Bank-grade encryption · M-Pesa secured</span>
         </div>
         <p className="text-center text-xs leading-relaxed text-muted">
-          18+ only. Play responsibly. By continuing you agree to our{' '}
+          Play responsibly. By continuing you agree to our{' '}
           <Link href="/legal" onClick={close} className="font-medium text-accent underline-offset-2 hover:underline">
             Terms &amp; Responsible Gaming
           </Link>{' '}

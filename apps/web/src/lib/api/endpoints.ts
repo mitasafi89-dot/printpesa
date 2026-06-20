@@ -23,11 +23,6 @@ export interface RegisterInput {
   referral_code?: string;
 }
 
-export interface ProfileInput {
-  full_name: string;
-  date_of_birth: string;
-}
-
 export interface PageParams {
   cursor?: string | null;
   limit?: number;
@@ -56,8 +51,6 @@ export const api = {
   login: (body: { phone: string; password: string }) =>
     apiFetch<AuthResult>('/auth/login', { method: 'POST', body }),
   me: (token: string) => apiFetch<MeDto>('/auth/me', { token }),
-  updateProfile: (token: string, body: ProfileInput) =>
-    apiFetch<unknown>('/auth/me', { method: 'PATCH', token, body }),
 
   // Wallet & history
   wallet: (token: string) => apiFetch<WalletDto>('/wallet', { token }),

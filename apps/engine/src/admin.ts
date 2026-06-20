@@ -24,7 +24,7 @@ export interface AdminOverview {
 }
 export interface AdminUserRow { userId: string; username: string; role: string; status: string; createdAtMs: number; }
 export interface AdminUserDetail extends AdminUserRow {
-  phone: string; fullName: string | null; dateOfBirth: string | null; kycStatus: string; referredBy: string | null;
+  phone: string; referredBy: string | null;
   realBalanceCents: Cents; bonusBalanceCents: Cents; turnoverCents: Cents; ggrCents: Cents;
 }
 export interface AdminWithdrawalRow { txId: string; userId: string; amountCents: Cents; status: string; phone: string; createdAtMs: number; }
@@ -246,7 +246,7 @@ export class PgAdminRepository implements AdminRepository {
 
   async getUserDetail(userId: string): Promise<AdminUserDetail | null> {
     const r = await this.q.query(
-      `select p.id, p.username, p.phone, p.role, p.status, p.full_name, p.date_of_birth, p.kyc_status, p.referred_by, p.created_at,
+      `select p.id, p.username, p.phone, p.role, p.status, p.referred_by, p.created_at,
               coalesce(w.real_balance,0) as real_balance, coalesce(w.bonus_balance,0) as bonus_balance,
               coalesce((select sum(stake) from positions po where po.user_id = p.id and po.status='settled'),0) as turnover,
               coalesce((select sum(stake - payout) from positions po where po.user_id = p.id and po.status='settled'),0) as ggr
@@ -257,8 +257,7 @@ export class PgAdminRepository implements AdminRepository {
     const x = r.rows[0];
     return {
       userId: String(x.id), username: String(x.username), role: String(x.role), status: String(x.status), createdAtMs: ms(x.created_at),
-      phone: String(x.phone), fullName: x.full_name == null ? null : String(x.full_name),
-      dateOfBirth: x.date_of_birth == null ? null : String(x.date_of_birth).slice(0, 10), kycStatus: String(x.kyc_status),
+      phone: String(x.phone),
       referredBy: x.referred_by == null ? null : String(x.referred_by),
       realBalanceCents: num(x.real_balance), bonusBalanceCents: num(x.bonus_balance), turnoverCents: num(x.turnover), ggrCents: num(x.ggr),
     };
@@ -633,7 +632,7 @@ export class InMemoryAdminRepository implements AdminRepository {
     const own = this.identity.adminPlaysOf(userId);
     return {
       userId: u.userId, username: u.username, role: u.role, status: u.status, createdAtMs: u.createdAtMs,
-      phone: u.phone, fullName: u.fullName, dateOfBirth: u.dateOfBirth, kycStatus: u.kycStatus, referredBy: u.referredBy,
+      phone: u.phone, referredBy: u.referredBy,
       realBalanceCents: await this.payments.getBalance(userId), bonusBalanceCents: 0,
       turnoverCents: own.reduce((s, p) => s + p.stakeCents, 0),
       ggrCents: own.reduce((s, p) => s + (p.stakeCents - p.payoutCents), 0),
