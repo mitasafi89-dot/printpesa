@@ -49,7 +49,7 @@ export function DepositModal() {
     setDone(false);
     setEditingPhone(false);
     setPhone('');
-    setAmount(prefillAmountCents && prefillAmountCents > 0 ? String(Math.ceil(centsToKes(prefillAmountCents))) : '');
+    setAmount(prefillAmountCents && prefillAmountCents > 0 ? String(Math.ceil(centsToKes(prefillAmountCents))) : '200');
   }, [open, prefillAmountCents]);
 
   if (!open) return null;
