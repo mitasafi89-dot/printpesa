@@ -12,9 +12,9 @@
   --pp-muted: #8b949e;
   --pp-up: #3fb950;
   --pp-down: #e43d3f;
-  --pp-accent: #16a34a;
+  --pp-accent: #00a859;
   --pp-accent-fg: #ffffff;
-  --pp-brand: #1bb64f;
+  --pp-brand: #43b02a;
   --pp-warn: #e3b341;
 }
 
@@ -27,9 +27,9 @@ html.light {
   --pp-muted: #636c76;
   --pp-up: #1a7f37;
   --pp-down: #cf222e;
-  --pp-accent: #16a34a;
+  --pp-accent: #00a859;
   --pp-accent-fg: #ffffff;
-  --pp-brand: #1bb64f;
+  --pp-brand: #43b02a;
   --pp-warn: #9a6700;
 }
 
