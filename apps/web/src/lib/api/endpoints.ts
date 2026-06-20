@@ -56,6 +56,7 @@ export const api = {
   login: (body: { phone: string; password: string }) =>
     apiFetch<AuthResult>('/auth/login', { method: 'POST', body }),
   me: (token: string) => apiFetch<MeDto>('/auth/me', { token }),
+  refreshToken: (token: string) => apiFetch<AuthResult>('/auth/refresh', { method: 'POST', token }),
 
   // Wallet & history
   wallet: (token: string) => apiFetch<WalletDto>('/wallet', { token }),

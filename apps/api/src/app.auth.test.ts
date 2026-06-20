@@ -110,3 +110,34 @@ test("GET /auth/me → returns the registered identity (no KYC fields)", async (
     assert.equal(me.ageVerified, undefined);
   } finally { await api.close(); }
 });
+
+// ───────────────────────────────────────── token refresh (role drift) ─────────────────────────────────────────
+test("POST /auth/refresh → re-issues a token with the caller's current role, gating non-active accounts", async () => {
+  const api = await startTestApi();
+  try {
+    const reg = await json(await req(api, "POST", "/api/v1/auth/register", { body: REG }));
+    const uid = reg.userId as string;
+
+    // Newly registered → player.
+    const before = await json(await req(api, "GET", "/api/v1/auth/me", { token: uid }));
+    assert.equal(before.role, "player");
+
+    // Promote in the identity store (simulating an admin role change). The OLD token still
+    // carries role=player; /auth/refresh must mint a fresh token reflecting the new role.
+    api.identity.adminSetRole(uid, "admin");
+    const refreshed = await req(api, "POST", "/api/v1/auth/refresh", { token: uid });
+    assert.equal(refreshed.status, 200);
+    const body = await json(refreshed);
+    assert.equal(body.userId, uid);
+    assert.equal(body.role, "admin");
+    assert.equal(typeof body.token, "string");
+    assert.ok(body.token.length > 0);
+
+    // Anonymous refresh is rejected.
+    assert.equal((await fetch(`${api.baseUrl}/api/v1/auth/refresh`, { method: "POST" })).status, 401);
+
+    // A suspended account fail-closes (no token re-issued).
+    api.identity.adminSetStatus(uid, "suspended");
+    assert.equal((await req(api, "POST", "/api/v1/auth/refresh", { token: uid })).status, 403);
+  } finally { await api.close(); }
+});

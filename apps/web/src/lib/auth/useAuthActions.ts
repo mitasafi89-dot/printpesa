@@ -3,6 +3,7 @@
 import { api, type RegisterInput } from '@/lib/api/endpoints';
 import { ApiError } from '@/lib/api/client';
 import { useSession } from '@/lib/auth/session';
+import { roleFromToken } from '@/lib/auth/token';
 
 export function useAuthActions() {
   const setToken = useSession((s) => s.setToken);
@@ -25,7 +26,17 @@ export function useAuthActions() {
 
   async function refresh(token: string) {
     try {
-      setUser(await api.me(token));
+      const me = await api.me(token);
+      setUser(me);
+      // Heal a stale token whose role claim no longer matches the live role (promotion/demotion).
+      if (roleFromToken(token) !== me.role) {
+        try {
+          const r = await api.refreshToken(token);
+          setToken(r.token);
+        } catch {
+          /* keep existing token; non-fatal */
+        }
+      }
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) reset();
     }

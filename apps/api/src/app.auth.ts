@@ -102,4 +102,21 @@ export function registerAuthRoutes(router: Router, deps: ApiDeps): void {
       phone: profile?.phone ?? null,
     };
   });
+
+  // Re-issue a token reflecting the caller's CURRENT role + status — no credentials required.
+  // A JWT's `role` claim is a snapshot from issue time, so a role change (e.g. a promotion to
+  // admin/superadmin, or a demotion) does not take effect until the token is replaced. Without
+  // this, a promoted user sees their new role in /auth/me (read live from the DB) while every
+  // role-gated route still 403s against the stale claim. The client calls this on load when it
+  // detects that drift, so permission changes apply on the next visit instead of forcing a
+  // manual sign-out/sign-in. The active-status gate also fail-closes a suspended/banned account.
+  router.post(`${BASE}/auth/refresh`, auth, async (ctx: Ctx) => {
+    const userId = ctx.claims!.userId;
+    const profile = await domain(() => deps.auth.me(userId));
+    if (profile.status !== "active") {
+      throw new ApiError(`ACCOUNT_${profile.status.toUpperCase()}`, `account is ${profile.status}`, 403);
+    }
+    const token = await deps.auth.issueToken(userId, profile.role);
+    return { token, userId, role: profile.role };
+  });
 }
