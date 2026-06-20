@@ -108,6 +108,7 @@ export function CurveCanvas({
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const PAD_Y = 12;
+    const PAD_LEFT = 30; // gutter so the curve never paints over the y-axis labels
 
     // Vertical geometry for the fixed ±Y_MAX scale; 0 sits dead-centre.
     const geom = () => {
@@ -122,7 +123,7 @@ export function CurveCanvas({
     // y-axis calibration grid (0.2 steps) + labels; the 0-axis is emphasised.
     const drawAxis = (Y: (v: number) => number) => {
       ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
-      ctx.textAlign = 'left';
+      ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       for (const v of AXIS_TICKS) {
         const y = Y(v);
@@ -130,11 +131,11 @@ export function CurveCanvas({
         ctx.strokeStyle = hexA(colors.axis, zero ? 0.5 : 0.13);
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(0, y);
+        ctx.moveTo(PAD_LEFT, y);
         ctx.lineTo(cssW, y);
         ctx.stroke();
         ctx.fillStyle = hexA(colors.muted, zero ? 0.95 : 0.55);
-        ctx.fillText(v.toFixed(1), 6, y);
+        ctx.fillText(v.toFixed(1), PAD_LEFT - 5, y);
       }
     };
 
@@ -181,7 +182,7 @@ export function CurveCanvas({
       }
 
       const { Y, y0 } = geom();
-      const X = (t: number) => ((t - start) / w) * cssW;
+      const X = (t: number) => PAD_LEFT + ((t - start) / w) * (cssW - PAD_LEFT);
 
       const last2 = pts[pts.length - 1]!;
       const coords: Pt[] = pts.map((p) => [X(p.t), Y(toValue(p.rate))]);
