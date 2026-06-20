@@ -1,8 +1,10 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Money } from '@/components/ui/Money';
+import { useSession } from '@/lib/auth/session';
 import { PageHeader, StatCard, Section, TableWrap, Th, Td, Empty } from '@/components/admin/ui';
 import { AreaChart, GroupedBars, ChartCard, LegendDot, kesCompact, type Point } from '@/components/admin/charts';
 import { useOverview, useRtp, useReportDaily } from '@/lib/admin/hooks';
@@ -16,10 +18,20 @@ function isoDaysAgo(days: number): string {
 export default function AdminOverviewPage() {
   const o = useOverview();
   const rtp = useRtp();
+  const isSuper = useSession((s) => s.user?.role) === 'superadmin';
 
   return (
     <>
-      <PageHeader title="Overview" subtitle="System health at a glance — users, finance, affiliate and game." />
+      <PageHeader
+        title="Overview"
+        subtitle={
+          isSuper
+            ? 'System owner view — full operational health plus governance controls.'
+            : 'Operations view — users, finance, affiliate and game health.'
+        }
+      />
+
+      {isSuper ? <GovernancePanel /> : null}
 
       <TrendsSection />
 
@@ -137,6 +149,35 @@ export default function AdminOverviewPage() {
 
 function pct(v: number): string {
   return `${(v * 100).toFixed(1)}%`;
+}
+
+/** Owner-only quick access to the governance controls a plain admin doesn't have. */
+function GovernancePanel() {
+  const links = [
+    { href: '/admin/users', title: 'Roles & users', desc: 'Promote / demote admins, marketers, players', glyph: '👤' },
+    { href: '/admin/game', title: 'Game economy', desc: 'House edge, RTP, stake limits, fairness seeds', glyph: '🎲' },
+    { href: '/admin/mpesa', title: 'M-Pesa rails', desc: 'Paybill, callbacks and credentials', glyph: '📲' },
+    { href: '/admin/audit', title: 'Audit log', desc: 'Every privileged action, who and when', glyph: '📜' },
+  ];
+  return (
+    <Section title="Governance — owner only">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {links.map((l) => (
+          <Link
+            key={l.href}
+            href={l.href}
+            className="flex items-start gap-3 rounded-2xl border border-warn/40 bg-warn/5 p-4 transition hover:bg-warn/10"
+          >
+            <span className="text-xl leading-none">{l.glyph}</span>
+            <span className="flex flex-col">
+              <span className="text-sm font-semibold text-fg">{l.title}</span>
+              <span className="text-xs text-muted">{l.desc}</span>
+            </span>
+          </Link>
+        ))}
+      </div>
+    </Section>
+  );
 }
 
 /** 30-day financial trend charts, derived from the daily report time series. */

@@ -9,6 +9,7 @@ import { ApiError } from '@/lib/api/client';
 import { useToast } from '@/lib/toast/ToastProvider';
 import { PageHeader, Section, TableWrap, Th, Td, Empty, ConfirmButton } from '@/components/admin/ui';
 import { useGameConfig, useUpdateGameConfig, useSeeds, useRotateSeed } from '@/lib/admin/hooks';
+import { SuperadminOnly } from '@/components/admin/SuperadminOnly';
 import type { GameConfigPatch, GameConfigRow } from '@/lib/admin/types';
 
 // Editable engine knobs. `kes` fields are stored as cents but edited in KES.
@@ -30,7 +31,7 @@ function toField(cfg: GameConfigRow, f: (typeof FIELDS)[number]): string {
   return f.kes ? String(raw / 100) : String(raw);
 }
 
-export default function GamePage() {
+function GameBody() {
   const cfgQ = useGameConfig();
   const update = useUpdateGameConfig();
   const toast = useToast();
@@ -192,5 +193,13 @@ function SeedsSection() {
         </TableWrap>
       )}
     </Section>
+  );
+}
+
+export default function GamePage() {
+  return (
+    <SuperadminOnly>
+      <GameBody />
+    </SuperadminOnly>
   );
 }

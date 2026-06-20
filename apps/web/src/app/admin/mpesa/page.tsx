@@ -10,6 +10,7 @@ import { useToast } from '@/lib/toast/ToastProvider';
 import { useSession } from '@/lib/auth/session';
 import { PageHeader, Section, Empty, FilterSelect } from '@/components/admin/ui';
 import { useMpesaConfig, useUpdateMpesaConfig } from '@/lib/admin/hooks';
+import { SuperadminOnly } from '@/components/admin/SuperadminOnly';
 import type { MpesaConfigPatch, MpesaConfigRow } from '@/lib/admin/types';
 
 // Plain (non-secret) editable string fields and their labels/hints.
@@ -36,7 +37,7 @@ const ENV_OPTIONS = [
   { value: 'production', label: 'Production' },
 ];
 
-export default function MpesaConfigPage() {
+function MpesaBody() {
   const cfgQ = useMpesaConfig();
   const update = useUpdateMpesaConfig();
   const toast = useToast();
@@ -192,5 +193,13 @@ export default function MpesaConfigPage() {
         </>
       )}
     </>
+  );
+}
+
+export default function MpesaConfigPage() {
+  return (
+    <SuperadminOnly>
+      <MpesaBody />
+    </SuperadminOnly>
   );
 }
