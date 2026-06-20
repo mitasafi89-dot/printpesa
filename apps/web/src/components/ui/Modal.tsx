@@ -47,7 +47,8 @@ export function Modal({
         tabIndex={-1}
         className={cn(
           'relative z-10 flex max-h-dvh w-full flex-col overflow-y-auto bg-surface outline-none',
-          'sm:my-8 sm:max-h-[90dvh] sm:max-w-md sm:rounded-2xl sm:border sm:border-border',
+          'border border-border shadow-2xl shadow-black/60 ring-1 ring-white/5',
+          'sm:my-8 sm:max-h-[90dvh] sm:max-w-md sm:rounded-2xl',
         )}
       >
         {children}

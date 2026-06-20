@@ -5,9 +5,9 @@
 /* Dark-first design tokens. Light theme overrides under .light on <html>. */
 :root {
   --pp-bg: #07090f;
-  --pp-surface: #0d1117;
-  --pp-surface-2: #161b22;
-  --pp-border: #21262d;
+  --pp-surface: #11161f;
+  --pp-surface-2: #1c2430;
+  --pp-border: #303945;
   --pp-fg: #e6edf3;
   --pp-muted: #8b949e;
   --pp-up: #3fb950;
