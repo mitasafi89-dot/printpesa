@@ -1,14 +1,19 @@
 import { apiFetch } from '@/lib/api/client';
 import type {
   ActivityDto,
+  AffiliateEnrollment,
+  AffiliateSummary,
   AuthResult,
+  CommissionRecord,
   DepositResult,
   GameConfigDto,
   LedgerEntryDto,
   MeDto,
   Paginated,
+  PayoutRequestResult,
   PositionDetailDto,
   PositionDto,
+  ReferralRecord,
   TransactionDto,
   TransactionKind,
   WalletDto,
@@ -79,4 +84,21 @@ export const api = {
     apiFetch<DepositResult>('/deposits', { method: 'POST', token, body }),
   createWithdrawal: (token: string, body: { amount: number; phone: string }) =>
     apiFetch<WithdrawalResult>('/withdrawals', { method: 'POST', token, body }),
+
+  // Affiliate / marketer (M5)
+  affiliateEnroll: (token: string) =>
+    apiFetch<AffiliateEnrollment>('/affiliate/enroll', { method: 'POST', token }),
+  affiliateSummary: (token: string) => apiFetch<AffiliateSummary>('/affiliate/summary', { token }),
+  affiliateReferrals: (token: string, p: PageParams = {}) =>
+    apiFetch<Paginated<ReferralRecord>>('/affiliate/referrals', {
+      token,
+      query: { cursor: p.cursor ?? undefined, limit: p.limit },
+    }),
+  affiliateCommissions: (token: string, p: PageParams = {}) =>
+    apiFetch<Paginated<CommissionRecord>>('/affiliate/commissions', {
+      token,
+      query: { cursor: p.cursor ?? undefined, limit: p.limit },
+    }),
+  affiliateRequestPayout: (token: string) =>
+    apiFetch<PayoutRequestResult>('/affiliate/payouts', { method: 'POST', token }),
 };

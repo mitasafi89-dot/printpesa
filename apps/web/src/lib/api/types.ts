@@ -114,3 +114,53 @@ export interface WithdrawalResult {
   transactionId: string;
   newBalance: Cents;
 }
+
+
+// ── Affiliate / marketer (M5 backend; engine AffiliateService) ──
+
+/** POST /affiliate/enroll — idempotent marketer enrollment. */
+export interface AffiliateEnrollment {
+  referralCode: string;
+  referralPath: string;
+  commissionRate: number;
+  status: string;
+  role: string;
+}
+
+/** GET /affiliate/summary — marketer dashboard aggregates (monetary fields in cents). */
+export interface AffiliateSummary {
+  referralCode: string;
+  referralPath: string;
+  commissionRate: number;
+  status: string;
+  totalReferrals: number;
+  activePlayers7d: number;
+  activePlayers30d: number;
+  turnoverCents: Cents;
+  ggrCents: Cents;
+  commissionAccruedCents: Cents;
+  commissionPaidCents: Cents;
+  availableCents: Cents;
+}
+
+/** GET /affiliate/referrals item — one referred player. */
+export interface ReferralRecord {
+  username: string;
+  joinedAtMs: number;
+  lifetimeGgrCents: Cents;
+}
+
+/** GET /affiliate/commissions item — one daily commission bucket. */
+export interface CommissionRecord {
+  period: string;
+  ggrCents: Cents;
+  commissionCents: Cents;
+  status: string;
+  createdAtMs: number;
+}
+
+/** POST /affiliate/payouts result — reserved payout amount + id. */
+export interface PayoutRequestResult {
+  payoutId: string;
+  amountCents: Cents;
+}

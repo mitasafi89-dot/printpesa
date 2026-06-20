@@ -10,10 +10,10 @@ import { useAuthUi } from '@/lib/auth/ui';
 import { useAuthActions } from '@/lib/auth/useAuthActions';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { phoneError, usernameError, passwordError, referralError } from '@/lib/auth/validation';
+import { REF_KEY } from '@/lib/auth/referral';
 import { cn } from '@/lib/cn';
 import type { RegisterInput } from '@/lib/api/endpoints';
 
-const REF_KEY = 'pp-ref';
 
 /* ── inline field icons (currentColor, inherit the muted field colour) ───────── */
 const ic = 'h-[18px] w-[18px]';
