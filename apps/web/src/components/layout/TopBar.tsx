@@ -1,4 +1,3 @@
-import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { AuthButtons } from '@/components/auth/AuthButtons';
 import { BalancePill } from '@/components/wallet/BalancePill';
 import { Logo } from '@/components/layout/Logo';
@@ -11,9 +10,6 @@ export function TopBar() {
 
         <div className="ml-auto flex items-center gap-2">
           <BalancePill />
-          <div className="hidden sm:block">
-            <ThemeToggle />
-          </div>
           <AuthButtons />
         </div>
       </div>

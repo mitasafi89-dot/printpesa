@@ -147,7 +147,7 @@ export function WithdrawForm() {
       ) : null}
 
       <Button type="submit" size="lg" fullWidth disabled={withdraw.isPending}>
-        {withdraw.isPending ? 'Requesting…' : 'Request withdrawal'}
+        {withdraw.isPending ? 'Requesting…' : 'Withdraw'}
       </Button>
     </form>
   );
