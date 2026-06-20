@@ -103,9 +103,9 @@ export function DepositModal() {
         <form className="flex flex-col gap-4 p-4" onSubmit={onSubmit} noValidate>
           {/* Balance context keeps users oriented (NN/g: keep balance readily available). */}
           {wallet ? (
-            <div className="flex items-center justify-between rounded-xl bg-surface-2 px-3.5 py-2.5">
-              <span className="text-xs text-muted">Wallet balance</span>
-              <span className="text-sm font-semibold text-fg">{formatKes(wallet.real + wallet.bonus)}</span>
+            <div className="flex flex-col items-center gap-0.5 rounded-2xl bg-surface-2 px-4 py-3 text-center">
+              <span className="text-xs text-muted">Available balance</span>
+              <span className="text-2xl font-extrabold tracking-tight text-accent">{formatKes(wallet.real + wallet.bonus)}</span>
             </div>
           ) : null}
 
@@ -192,13 +192,13 @@ export function DepositModal() {
             </p>
           ) : null}
 
+          <p className="text-xs leading-relaxed text-muted">
+            You’ll get an STK push prompt on your phone — enter your M-Pesa PIN to confirm.
+            Your PIN is never entered in this app.
+          </p>
           <Button type="submit" size="lg" fullWidth disabled={deposit.isPending}>
             {deposit.isPending ? 'Sending STK push…' : 'Continue to M-Pesa'}
           </Button>
-          <p className="text-center text-xs leading-relaxed text-muted">
-            You’ll get a prompt on your phone — enter your M-Pesa PIN to confirm.
-            Your PIN is never entered in this app.
-          </p>
         </form>
       )}
     </Modal>

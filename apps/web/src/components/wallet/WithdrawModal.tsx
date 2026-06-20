@@ -90,9 +90,9 @@ export function WithdrawModal({ open, onClose }: { open: boolean; onClose: () =>
         </div>
       ) : (
         <form className="flex flex-col gap-4 p-4" onSubmit={onSubmit} noValidate>
-          <div className="flex items-center justify-between rounded-xl bg-surface-2 px-3.5 py-2.5">
+          <div className="flex flex-col items-center gap-0.5 rounded-2xl bg-surface-2 px-4 py-3 text-center">
             <span className="text-xs text-muted">Available to withdraw</span>
-            <span className="text-sm font-semibold text-fg">{formatKes(realCents)}</span>
+            <span className="text-2xl font-extrabold tracking-tight text-accent">{formatKes(realCents)}</span>
           </div>
 
           <div className="flex gap-2">
