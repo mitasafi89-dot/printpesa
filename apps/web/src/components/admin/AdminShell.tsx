@@ -10,6 +10,7 @@ import { useSession } from '@/lib/auth/session';
 import { useAuthUi } from '@/lib/auth/ui';
 import { useAuthActions } from '@/lib/auth/useAuthActions';
 import { useHydrated } from '@/lib/useHydrated';
+import { LogoMark } from '@/components/layout/Logo';
 
 type NavItem = { href: string; label: string; icon: React.ReactNode };
 type NavSection = { title: string; items: NavItem[]; superadmin?: boolean };
@@ -102,16 +103,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       >
         <div className="flex items-center justify-between px-4 py-3">
           <Link href="/admin" className="flex items-center gap-2">
-            <span
-              className={cn(
-                'flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold',
-                isSuper ? 'bg-warn text-bg' : 'bg-accent text-accent-fg',
-              )}
-            >
-              {isSuper ? '★' : 'P'}
-            </span>
+            <LogoMark className="h-7 w-7" />
             <span className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-tight">PrintPesa {isSuper ? 'Console' : 'Admin'}</span>
+              <span className="text-sm font-semibold tracking-tight">invest254 {isSuper ? 'Console' : 'Admin'}</span>
               <span className={cn('text-[10px] font-medium uppercase tracking-wide', isSuper ? 'text-warn' : 'text-muted')}>
                 {isSuper ? 'Owner · full authority' : 'Operations'}
               </span>

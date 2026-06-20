@@ -4,11 +4,11 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
 
 export const metadata: Metadata = {
-  title: { default: 'PrintPesa', template: '%s · PrintPesa' },
+  title: { default: 'invest254', template: '%s · invest254' },
   description: 'Real-money trade-prediction game — predict BUY/SELL on the live BTC/KES curve.',
-  applicationName: 'PrintPesa',
+  applicationName: 'invest254',
   manifest: '/manifest.webmanifest',
-  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'PrintPesa' },
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'invest254' },
   icons: {
     icon: [{ url: '/favicon.png', type: 'image/png' }],
     apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180' }],

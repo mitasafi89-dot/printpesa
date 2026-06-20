@@ -1,37 +1,55 @@
 import Link from 'next/link';
 
-/** PrintPesa brand lockup — P mark + two-tone wordmark, theme-aware via currentColor. */
+/** Brand colours (Kenyan-flag inspired) — fixed in both themes. The navy elements adapt to the
+ *  theme via `currentColor` (dark on light backgrounds, light on dark) so the mark always reads. */
+const GREEN = '#1F9E4D';
+const RED = '#D62B2B';
+
+/**
+ * invest254 chart mark: three ascending bars (navy · green · red) with a white growth arrow
+ * sweeping up through the green and red bars. The navy bar + wordmark text use `currentColor`,
+ * so the caller's text colour (`text-fg`) drives light/dark theming; green, red and the white
+ * arrow are fixed brand colours that stay legible on either background. The arrow is kept over
+ * the saturated green/red bars only, so white never lands on a light surface.
+ */
+export function LogoMark({ className = 'h-7 w-7' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 48 48" className={`shrink-0 ${className}`} role="img" aria-hidden fill="none">
+      {/* Navy bar (shortest) — theme-adaptive. */}
+      <path d="M6 41 L8 28 L15 28 L13 41 Z" fill="currentColor" />
+      {/* Green bar (medium). */}
+      <path d="M16 41 L18 19 L26 19 L24 41 Z" fill={GREEN} />
+      {/* Red bar (tallest). */}
+      <path d="M27 41 L29 8 L40 8 L38 41 Z" fill={RED} />
+      {/* Growth arrow — white, confined to the green/red bars. */}
+      <path
+        d="M17 38 C 23 36 27 30 31 22 S 36 12 38 9.5"
+        fill="none"
+        stroke="#FFFFFF"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Arrowhead pointing up-right at the tip of the red bar. */}
+      <path d="M39.5 8 L30.5 10.2 L36.4 16.3 Z" fill="#FFFFFF" />
+    </svg>
+  );
+}
+
+/** invest254 brand lockup — mark + two-tone wordmark, theme-aware via currentColor. */
 export function Logo({ className = '' }: { className?: string }) {
   return (
     <Link
       href="/"
-      aria-label="PrintPesa home"
+      aria-label="invest254 home"
       className={`flex items-center gap-2 text-fg ${className}`}
     >
-      <svg
-        viewBox="0 0 44 48"
-        className="h-7 w-7 shrink-0"
-        role="img"
-        aria-hidden
-        fill="none"
-      >
-        {/* "P" letterform (inherits text colour; counter cut with evenodd). */}
-        <path
-          fillRule="evenodd"
-          clipRule="evenodd"
-          d="M10 4a2 2 0 0 0-2 2v36a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V32h9a14 14 0 0 0 0-28H10Zm8 8v12h7a6 6 0 0 0 0-12h-7Z"
-          fill="currentColor"
-        />
-        {/* Brand-green folded-page accent over the lower stem (follows the theme accent). */}
-        <path
-          className="text-accent"
-          d="M5.6 23.2l8.8-3.1a1.8 1.8 0 0 1 2.4 1.7v14.4a1.8 1.8 0 0 1-1.2 1.7l-8.8 3.1A1.8 1.8 0 0 1 4.4 39.3V24.9a1.8 1.8 0 0 1 1.2-1.7Z"
-          fill="currentColor"
-        />
-      </svg>
+      <LogoMark />
       <span className="text-lg font-extrabold tracking-tight leading-none">
-        <span>Print</span>
-        <span className="text-accent">Pesa</span>
+        <span>invest</span>
+        <span style={{ color: GREEN }}>2</span>
+        <span>5</span>
+        <span style={{ color: RED }}>4</span>
       </span>
     </Link>
   );
