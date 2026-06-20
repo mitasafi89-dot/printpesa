@@ -1,0 +1,209 @@
+'use client';
+
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { adminApi } from '@/lib/admin/endpoints';
+import type { Paginated } from '@/lib/api/types';
+import { useSession } from '@/lib/auth/session';
+
+/** Bearer token for admin calls. */
+function useTok() {
+  return useSession((s) => s.token) as string;
+}
+
+export function useOverview() {
+  const t = useTok();
+  return useQuery({ queryKey: ['admin', 'overview'], queryFn: () => adminApi.overview(t), enabled: !!t });
+}
+export function useRtp() {
+  const t = useTok();
+  return useQuery({ queryKey: ['admin', 'rtp'], queryFn: () => adminApi.rtp(t), enabled: !!t });
+}
+
+// ── Users ──
+export function useUsers(filter: { role?: string; status?: string; q?: string }) {
+  const t = useTok();
+  return useInfiniteQuery({
+    queryKey: ['admin', 'users', filter],
+    enabled: !!t,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => adminApi.users(t, { cursor: pageParam, ...filter }),
+    getNextPageParam: (l: Paginated<unknown>) => l.nextCursor ?? undefined,
+  });
+}
+export function useUser(id: string | null) {
+  const t = useTok();
+  return useQuery({ queryKey: ['admin', 'user', id], queryFn: () => adminApi.user(t, id as string), enabled: !!t && !!id });
+}
+export function useSetUserStatus() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; action: 'suspend' | 'ban' | 'reactivate'; reason?: string }) =>
+      adminApi.setUserStatus(t, v.id, v.action, v.reason),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'user', v.id] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'overview'] });
+    },
+  });
+}
+export function useAdjustBalance() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; amountCents: number; reason: string }) =>
+      adminApi.adjustBalance(t, v.id, v.amountCents, v.reason),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'user', v.id] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'overview'] });
+    },
+  });
+}
+
+// ── Withdrawals ──
+export function useWithdrawals(status?: string) {
+  const t = useTok();
+  return useInfiniteQuery({
+    queryKey: ['admin', 'withdrawals', status ?? 'all'],
+    enabled: !!t,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => adminApi.withdrawals(t, { cursor: pageParam, status }),
+    getNextPageParam: (l: Paginated<unknown>) => l.nextCursor ?? undefined,
+  });
+}
+export function useWithdrawalAction() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; action: 'approve' | 'reject' }) =>
+      v.action === 'approve' ? adminApi.approveWithdrawal(t, v.id) : adminApi.rejectWithdrawal(t, v.id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'withdrawals'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'overview'] });
+    },
+  });
+}
+
+// ── Deposits ──
+export function useDeposits(status?: string) {
+  const t = useTok();
+  return useInfiniteQuery({
+    queryKey: ['admin', 'deposits', status ?? 'all'],
+    enabled: !!t,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => adminApi.deposits(t, { cursor: pageParam, status }),
+    getNextPageParam: (l: Paginated<unknown>) => l.nextCursor ?? undefined,
+  });
+}
+export function useDepositsReconcile(staleMinutes = 15) {
+  const t = useTok();
+  return useQuery({
+    queryKey: ['admin', 'deposits-reconcile', staleMinutes],
+    queryFn: () => adminApi.depositsReconcile(t, staleMinutes),
+    enabled: !!t,
+  });
+}
+
+// ── Affiliates ──
+export function useAffiliatePayouts(status?: string) {
+  const t = useTok();
+  return useInfiniteQuery({
+    queryKey: ['admin', 'payouts', status ?? 'all'],
+    enabled: !!t,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => adminApi.affiliatePayouts(t, { cursor: pageParam, status }),
+    getNextPageParam: (l: Paginated<unknown>) => l.nextCursor ?? undefined,
+  });
+}
+export function usePayoutAction() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; action: 'approve' | 'reject' }) =>
+      v.action === 'approve' ? adminApi.approvePayout(t, v.id) : adminApi.rejectPayout(t, v.id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'payouts'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'overview'] });
+    },
+  });
+}
+export function useSetCommissionRate() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; rate: number }) => adminApi.setCommissionRate(t, v.id, v.rate),
+    onSuccess: (_d, v) => void qc.invalidateQueries({ queryKey: ['admin', 'user', v.id] }),
+  });
+}
+
+// ── Game config / seeds ──
+export function useGameConfig() {
+  const t = useTok();
+  return useQuery({ queryKey: ['admin', 'game-config'], queryFn: () => adminApi.gameConfig(t), enabled: !!t });
+}
+export function useUpdateGameConfig() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Record<string, number>) => adminApi.updateGameConfig(t, patch),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'game-config'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'rtp'] });
+    },
+  });
+}
+export function useSeeds() {
+  const t = useTok();
+  return useQuery({ queryKey: ['admin', 'seeds'], queryFn: () => adminApi.seeds(t), enabled: !!t });
+}
+export function useRotateSeed() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tradeDate: string) => adminApi.rotateSeed(t, tradeDate),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['admin', 'seeds'] }),
+  });
+}
+
+// ── Chat moderation ──
+export function useChatMod(includeHidden: boolean) {
+  const t = useTok();
+  return useQuery({
+    queryKey: ['admin', 'chat', includeHidden],
+    queryFn: () => adminApi.chat(t, includeHidden),
+    enabled: !!t,
+  });
+}
+export function useChatModAction() {
+  const t = useTok();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; hide: boolean }) => (v.hide ? adminApi.hideChat(t, v.id) : adminApi.unhideChat(t, v.id)),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['admin', 'chat'] }),
+  });
+}
+
+// ── Reports + audit ──
+export function useReportDaily(range: { from?: string; to?: string }) {
+  const t = useTok();
+  return useQuery({ queryKey: ['admin', 'report-daily', range], queryFn: () => adminApi.reportDaily(t, range), enabled: !!t });
+}
+export function useReportUsers(range: { from?: string; to?: string }) {
+  const t = useTok();
+  return useQuery({ queryKey: ['admin', 'report-users', range], queryFn: () => adminApi.reportUsers(t, range), enabled: !!t });
+}
+export function useAudit() {
+  const t = useTok();
+  return useInfiniteQuery({
+    queryKey: ['admin', 'audit'],
+    enabled: !!t,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => adminApi.audit(t, { cursor: pageParam }),
+    getNextPageParam: (l: Paginated<unknown>) => l.nextCursor ?? undefined,
+  });
+}

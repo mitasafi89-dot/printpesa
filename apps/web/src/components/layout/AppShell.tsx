@@ -1,4 +1,7 @@
+'use client';
+
 import * as React from 'react';
+import { usePathname } from 'next/navigation';
 import { TopBar } from '@/components/layout/TopBar';
 import { BottomNav } from '@/components/layout/BottomNav';
 import { Footer } from '@/components/layout/Footer';
@@ -8,6 +11,20 @@ import { SessionBootstrap } from '@/components/auth/SessionBootstrap';
 import { RegisterSW } from '@/components/RegisterSW';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+
+  // The admin console provides its own chrome (sidebar). Suppress the player
+  // top bar / bottom nav / footer there, but keep session bootstrap + SW.
+  if (pathname?.startsWith('/admin')) {
+    return (
+      <>
+        {children}
+        <SessionBootstrap />
+        <RegisterSW />
+      </>
+    );
+  }
+
   return (
     <div className="flex min-h-dvh flex-col">
       <TopBar />
