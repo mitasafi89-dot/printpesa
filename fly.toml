@@ -1,0 +1,52 @@
+# Root Fly.io config — single-app backend (used by the Fly.io WEBSITE launch flow).
+# Runs BOTH the WebSocket engine (8080) and the REST API (8081) in one container.
+#
+#   API : https://<app>.fly.dev/api/v1   (port 443 -> 8081)
+#   WS  : wss://<app>.fly.dev:8080        (port 8080 -> 8080)
+#
+# For a cleaner two-app split (independent scaling) use the CLI instead:
+#   fly deploy -c fly.engine.toml   and   fly deploy -c fly.api.toml
+
+app            = "invest254-backend"   # change in the Fly UI if this name is taken
+primary_region = "jnb"                 # Johannesburg — Fly's closest region to Kenya
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  # IMPORTANT: do NOT set PORT here. Both services read process.env.PORT, so a single
+  # value would make them collide. Unset => engine defaults to 8080, API to 8081.
+
+# Primary service: REST API on 8081, gets the https://<app>.fly.dev hostname.
+[http_service]
+  internal_port        = 8081
+  force_https          = true
+  auto_stop_machines   = "off"   # keep the authoritative game loop always warm
+  auto_start_machines  = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval     = "30s"
+    timeout      = "5s"
+    grace_period = "10s"
+    method       = "GET"
+    path         = "/api/v1/health"
+
+# Second service: the WebSocket engine on 8080, exposed (wss://) on external port 8080.
+[[services]]
+  protocol      = "tcp"
+  internal_port = 8080
+
+  [[services.ports]]
+    port     = 8080
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type       = "connections"
+    hard_limit = 5000
+    soft_limit = 4000
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"

@@ -33,5 +33,8 @@ ENV NODE_ENV=production
 EXPOSE 8080 8081
 
 ENTRYPOINT ["dumb-init", "--"]
-# Default to the API; each Fly app overrides this via its [processes] block.
-CMD ["npm", "-w", "@invest254/api", "start"]
+# Default: run BOTH services in one container (website / single-app deploy via root
+# fly.toml). The engine binds 8080 and the API binds 8081 from their own defaults
+# (neither PORT env is set, so they don't collide). The per-app CLI configs
+# (fly.engine.toml / fly.api.toml) override this with a single-service [processes].
+CMD ["sh", "-c", "npm -w @invest254/engine start & npm -w @invest254/api start & wait"]
