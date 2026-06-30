@@ -9,7 +9,7 @@ import { Feed } from '@/components/game/Feed';
 export default function GamePage() {
   return (
     <GameSocketProvider>
-      <section className="flex flex-col gap-3 pb-[25rem] md:pb-0">
+      <section className="flex flex-col gap-3 pb-[21rem] md:pb-0">
         <PriceHeader />
         <TickerStrip />
         <GameCurve />

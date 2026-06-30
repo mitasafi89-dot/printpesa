@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { useDepositUi, type WalletMode } from '@/lib/wallet/depositUi';
 import { useWallet } from '@/lib/wallet/hooks';
+import { useSession } from '@/lib/auth/session';
 import { DepositForm } from '@/components/wallet/DepositForm';
 import { WithdrawForm } from '@/components/wallet/WithdrawForm';
 
@@ -24,6 +25,7 @@ export function WalletModal() {
   const mode = useDepositUi((s) => s.mode);
   const setMode = useDepositUi((s) => s.setMode);
   const close = useDepositUi((s) => s.close);
+  const token = useSession((s) => s.token);
   const { data: wallet } = useWallet();
 
   if (!open) return null;
@@ -44,8 +46,10 @@ export function WalletModal() {
             <span className="text-2xl font-extrabold tracking-tight text-accent">
               {formatKes(mode === 'deposit' ? wallet.real + wallet.bonus : wallet.real)}
             </span>
-          ) : (
+          ) : token ? (
             <Skeleton className="h-7 w-32" />
+          ) : (
+            <span className="text-2xl font-extrabold tracking-tight text-accent">{formatKes(0)}</span>
           )}
         </div>
       </div>

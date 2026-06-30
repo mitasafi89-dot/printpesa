@@ -14,6 +14,11 @@ interface WalletUiState {
   prefillAmountCents: number | null;
   /** Trade to resume once the wallet is funded. Survives closing the sheet. */
   pending: PendingTrade | null;
+  /**
+   * Set when a logged-out user starts a deposit and we route them to sign up/login first.
+   * AuthModal reads this after a successful auth to reopen the deposit sheet automatically.
+   */
+  resumeAfterAuth: boolean;
   /** Open on the Deposit tab (optionally seeded to fund a specific trade). */
   openDeposit: (opts?: { amountCents?: number; pending?: PendingTrade | null }) => void;
   /** Open on the Withdraw tab. */
@@ -22,6 +27,13 @@ interface WalletUiState {
   setMode: (mode: WalletMode) => void;
   close: () => void;
   clearPending: () => void;
+  /**
+   * Logged-out deposit: stash the entered amount, close the sheet, and flag a resume so the
+   * BUY/SELL -> deposit -> sign up/login chain can pick up exactly where it left off.
+   */
+  deferToAuth: (amountCents?: number) => void;
+  /** Reopen the deposit sheet after auth, preserving the seeded amount + pending trade. */
+  resumeDeposit: () => void;
 }
 
 /**
@@ -34,10 +46,24 @@ export const useDepositUi = create<WalletUiState>((set) => ({
   mode: 'deposit',
   prefillAmountCents: null,
   pending: null,
+  resumeAfterAuth: false,
   openDeposit: (opts = {}) =>
-    set({ open: true, mode: 'deposit', prefillAmountCents: opts.amountCents ?? null, pending: opts.pending ?? null }),
-  openWithdraw: () => set({ open: true, mode: 'withdraw', prefillAmountCents: null }),
+    set({
+      open: true,
+      mode: 'deposit',
+      prefillAmountCents: opts.amountCents ?? null,
+      pending: opts.pending ?? null,
+      resumeAfterAuth: false,
+    }),
+  openWithdraw: () => set({ open: true, mode: 'withdraw', prefillAmountCents: null, resumeAfterAuth: false }),
   setMode: (mode) => set({ mode }),
-  close: () => set({ open: false }),
+  close: () => set({ open: false, resumeAfterAuth: false }),
   clearPending: () => set({ pending: null }),
+  deferToAuth: (amountCents) =>
+    set((s) => ({
+      open: false,
+      resumeAfterAuth: true,
+      prefillAmountCents: amountCents ?? s.prefillAmountCents,
+    })),
+  resumeDeposit: () => set({ open: true, mode: 'deposit', resumeAfterAuth: false }),
 }));

@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/layout/Logo';
 import { useAuthUi } from '@/lib/auth/ui';
+import { useDepositUi } from '@/lib/wallet/depositUi';
 import { useAuthActions } from '@/lib/auth/useAuthActions';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { phoneError, usernameError, passwordError, referralError } from '@/lib/auth/validation';
@@ -78,6 +79,9 @@ function Spinner() {
 export function AuthModal() {
   const { open, mode, openAuth, close } = useAuthUi();
   const { login, register } = useAuthActions();
+  // If the user arrived here from a logged-out deposit, reopen that sheet once they're in.
+  const resumeAfterAuth = useDepositUi((s) => s.resumeAfterAuth);
+  const resumeDeposit = useDepositUi((s) => s.resumeDeposit);
 
   const [phone, setPhone] = useState('');
   const [username, setUsername] = useState('');
@@ -142,6 +146,7 @@ export function AuthModal() {
         await login(phone, password);
       }
       close();
+      if (resumeAfterAuth) resumeDeposit();
     } catch (err) {
       setServerError(authErrorMessage(err));
     } finally {

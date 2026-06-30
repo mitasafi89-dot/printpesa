@@ -11,7 +11,6 @@ import { Money } from '@/components/ui/Money';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { api } from '@/lib/api/endpoints';
 import { useSession } from '@/lib/auth/session';
-import { useAuthUi } from '@/lib/auth/ui';
 import { useDepositUi } from '@/lib/wallet/depositUi';
 import { useWallet } from '@/lib/wallet/hooks';
 import { useHydrated } from '@/lib/useHydrated';
@@ -26,7 +25,6 @@ const CONFIRM_CENTS = 50000;
 export function BetPanel() {
   const hydrated = useHydrated();
   const token = useSession((s) => s.token);
-  const openAuth = useAuthUi((s) => s.openAuth);
   const openDeposit = useDepositUi((s) => s.openDeposit);
   const pendingTrade = useDepositUi((s) => s.pending);
   const clearPending = useDepositUi((s) => s.clearPending);
@@ -104,11 +102,14 @@ export function BetPanel() {
   }
 
   function handleDirection(dir: Direction) {
+    if (!validStake || overMax) return;
+    // Business logic first: a logged-out tap is real buying intent. Open the deposit sheet
+    // seeded with this stake (the sheet routes to sign up/login, then resumes the deposit),
+    // so funding leads and the account is created along the way -- not the other way round.
     if (!token) {
-      openAuth('login');
+      openDeposit({ amountCents: stakeCents, pending: { direction: dir, stakeCents } });
       return;
     }
-    if (!validStake || overMax) return;
     // Highest-intent moment: no/short balance -> convert the tap into a funded deposit, then resume.
     if (overBalance) {
       openDeposit({ amountCents: stakeCents, pending: { direction: dir, stakeCents } });
@@ -126,10 +127,10 @@ export function BetPanel() {
   // ── Loading ───────────────────────────────────────────────────────────────
   if (!hydrated) {
     return (
-      <Card className="flex flex-col gap-3 p-3">
-        <Skeleton className="h-12 w-full" />
+      <Card className="flex flex-col gap-2 p-2.5">
         <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-10 w-full" />
       </Card>
     );
   }
@@ -139,9 +140,9 @@ export function BetPanel() {
     const canCashOut =
       activePosition.phase === 'open' && activePosition.sellable && !!activePosition.positionId;
     return (
-      <Card className="flex flex-col gap-3 p-3">
+      <Card className="flex flex-col gap-2 p-2.5">
         <LivePnl pos={activePosition} />
-        <Button variant="secondary" size="lg" fullWidth disabled={!canCashOut} onClick={sell}>
+        <Button variant="secondary" size="md" fullWidth className="!h-10" disabled={!canCashOut} onClick={sell}>
           {activePosition.phase === 'settling'
             ? 'Cashing out…'
             : canCashOut
@@ -157,7 +158,7 @@ export function BetPanel() {
 
   // ── Idle — stake + duration + BUY/SELL (always visible) ─────────────────────
   return (
-    <Card className="flex flex-col gap-3 p-3">
+    <Card className="flex flex-col gap-2 p-2.5">
       {/* Stake input with KES prefix */}
       <div className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 px-3">
         <span className="rounded-md bg-surface px-2 py-1 text-xs font-semibold text-muted">KES</span>
@@ -167,7 +168,7 @@ export function BetPanel() {
           onChange={(e) => setStake(e.target.value.replace(/[^0-9.]/g, ''))}
           placeholder="0"
           aria-label="Stake amount in KES"
-          className="h-12 w-full bg-transparent text-2xl font-bold tabular-nums text-fg outline-none placeholder:text-muted"
+          className="h-10 w-full bg-transparent text-xl font-bold tabular-nums text-fg outline-none placeholder:text-muted"
         />
       </div>
 
@@ -179,7 +180,7 @@ export function BetPanel() {
             type="button"
             onClick={() => setStake(String(centsToKes(c)))}
             className={cn(
-              'h-10 rounded-lg border text-sm font-semibold tabular-nums transition',
+              'h-9 rounded-lg border text-sm font-semibold tabular-nums transition',
               chipActive(c)
                 ? 'border-accent bg-accent/10 text-accent'
                 : 'border-border bg-surface-2 text-fg hover:border-accent/60',
@@ -193,9 +194,9 @@ export function BetPanel() {
       {errorHint ? <p className="text-xs text-down">{errorHint}</p> : null}
 
       {/* Auto-sell duration + idle Live P&L */}
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-1.5">
         <button type="button" onClick={cycleDuration} className="flex items-center gap-3" aria-label="Cycle trade duration">
-          <span className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-accent text-sm font-bold tabular-nums text-accent">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-accent text-xs font-bold tabular-nums text-accent">
             {durationS}
           </span>
           <span className="flex flex-col text-left leading-tight">
@@ -214,11 +215,11 @@ export function BetPanel() {
       ) : null}
 
       {/* BUY / SELL */}
-      <div className="grid grid-cols-2 gap-3">
-        <Button variant="up" size="lg" fullWidth disabled={connecting} onClick={() => handleDirection('buy')}>
+      <div className="grid grid-cols-2 gap-2">
+        <Button variant="up" size="md" fullWidth className="!h-10" disabled={connecting} onClick={() => handleDirection('buy')}>
           {armed === 'buy' ? `Confirm · ${formatKes(stakeCents)}` : 'BUY'}
         </Button>
-        <Button variant="down" size="lg" fullWidth disabled={connecting} onClick={() => handleDirection('sell')}>
+        <Button variant="down" size="md" fullWidth className="!h-10" disabled={connecting} onClick={() => handleDirection('sell')}>
           {armed === 'sell' ? `Confirm · ${formatKes(stakeCents)}` : 'SELL'}
         </Button>
       </div>
@@ -230,7 +231,7 @@ export function BetPanel() {
       ) : armed ? (
         <p className="text-center text-[11px] text-muted">Tap again to confirm your stake.</p>
       ) : !token ? (
-        <p className="text-center text-[11px] text-muted">You&apos;ll be asked to log in to place a trade.</p>
+        <p className="text-center text-[11px] text-muted">Deposit to buy or sell.</p>
       ) : overBalance ? (
         <p className="text-center text-[11px] text-warn">Not enough balance — tap BUY or SELL to add money and trade.</p>
       ) : null}

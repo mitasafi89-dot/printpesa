@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { useDeposit, useWallet } from '@/lib/wallet/hooks';
 import { useDepositUi } from '@/lib/wallet/depositUi';
+import { useAuthUi } from '@/lib/auth/ui';
 import { useSession } from '@/lib/auth/session';
 import { authErrorMessage } from '@/lib/auth/errors';
 import { maskMsisdn } from '@/lib/wallet/format';
@@ -23,7 +24,10 @@ export function DepositForm() {
   const close = useDepositUi((s) => s.close);
   const prefillAmountCents = useDepositUi((s) => s.prefillAmountCents);
   const pending = useDepositUi((s) => s.pending);
+  const deferToAuth = useDepositUi((s) => s.deferToAuth);
+  const openAuth = useAuthUi((s) => s.openAuth);
 
+  const token = useSession((s) => s.token);
   const accountPhone = useSession((s) => s.user?.phone ?? null);
   const { data: wallet } = useWallet();
   const deposit = useDeposit();
@@ -46,13 +50,22 @@ export function DepositForm() {
     const kes = Number(amount);
     const next: Record<string, string | undefined> = {};
     if (!Number.isInteger(kes) || kes < MIN_KES) next['amount'] = `Enter at least ${formatKes(MIN_DEPOSIT_CENTS)}.`;
-    try {
-      normalizeMsisdn(effectivePhone);
-    } catch {
-      next['phone'] = 'Enter a valid Kenyan number, e.g. 0712 345 678.';
+    // Logged-out users only pick an amount here; the phone comes from their account after sign up.
+    if (token) {
+      try {
+        normalizeMsisdn(effectivePhone);
+      } catch {
+        next['phone'] = 'Enter a valid Kenyan number, e.g. 0712 345 678.';
+      }
     }
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
+    // Business logic first: capture the amount, route to sign up/login, then resume this deposit.
+    if (!token) {
+      deferToAuth(kesToCents(kes));
+      openAuth('register');
+      return;
+    }
     try {
       await deposit.mutateAsync({ amount: kesToCents(kes), phone: effectivePhone });
       setDone(true);
@@ -118,8 +131,9 @@ export function DepositForm() {
         className="text-lg font-semibold"
       />
 
-      {/* M-Pesa number: prefilled from the account, read-only unless changed */}
-      {accountPhone && !editingPhone ? (
+      {/* M-Pesa number: only collected once signed in (prefilled from the account, read-only unless changed) */}
+      {token ? (
+        accountPhone && !editingPhone ? (
         <div className="flex items-center justify-between rounded-xl border border-border bg-surface-2 px-3.5 py-3">
           <div>
             <div className="text-xs text-muted">M-Pesa number</div>
@@ -147,7 +161,8 @@ export function DepositForm() {
           error={errors['phone']}
           {...(accountPhone ? { hint: 'Sending to a different number than your account.' } : {})}
         />
-      )}
+        )
+      ) : null}
 
       {serverError ? (
         <p className="rounded-xl border border-down/40 bg-down/10 px-3 py-2 text-sm text-down" role="alert">
@@ -156,11 +171,16 @@ export function DepositForm() {
       ) : null}
 
       <p className="text-xs leading-relaxed text-muted">
-        You’ll get an STK push prompt on your phone — enter your M-Pesa PIN to confirm.
-        Your PIN is never entered in this app.
+        {token
+          ? 'You’ll get an STK push prompt on your phone — enter your M-Pesa PIN to confirm. Your PIN is never entered in this app.'
+          : 'Create your free account next, then approve the M-Pesa prompt to fund this deposit.'}
       </p>
       <Button type="submit" size="lg" fullWidth disabled={deposit.isPending}>
-        {deposit.isPending ? 'Sending STK push…' : 'Continue to M-Pesa'}
+        {!token
+          ? 'Sign up to deposit'
+          : deposit.isPending
+            ? 'Sending STK push…'
+            : 'Continue to M-Pesa'}
       </Button>
     </form>
   );

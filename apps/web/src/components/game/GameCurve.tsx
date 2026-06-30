@@ -30,7 +30,7 @@ export function GameCurve() {
         </span>
       </div>
 
-      <div className="relative h-44 w-full overflow-hidden rounded-xl bg-surface sm:h-80">
+      <div className="relative h-52 w-full overflow-hidden rounded-xl bg-surface sm:h-80">
         <CurveCanvas getTicks={getTicks} getLastTick={getLastTick} windowMs={WINDOW_MS} />
       </div>
     </div>
