@@ -19,13 +19,13 @@ export function AuthButtons() {
     return (
       <>
         <ThemeToggle />
-        <Button variant="ghost" size="sm" onClick={() => openAuth('login')}>
+        <Button variant="ghost" size="sm" className="px-2.5 sm:px-3" onClick={() => openAuth('login')}>
           Login
         </Button>
         <Button
           variant="primary"
           size="sm"
-          className="font-semibold shadow-md shadow-accent/40"
+          className="px-2.5 font-semibold shadow-md shadow-accent/40 sm:px-3"
           onClick={() => openAuth('register')}
         >
           Sign Up
